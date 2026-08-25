@@ -1,0 +1,73 @@
+experiment:
+  name: cifar10_chenyaofo_pareto
+  seed: 20260824
+  device: cuda
+  output_dir: artifacts/runs/cifar10_pareto
+
+assets:
+  root: artifacts
+  manifest: configs/assets.yaml
+
+data:
+  dataset: CIFAR10
+  dispatcher_train_size: 50000
+  ga_search_size: 8000
+  final_evaluation_size: 2000
+  split_seed: 20260824
+  batch_size: 256
+  num_workers: 4
+  normalize_mean: [0.4914, 0.4822, 0.4465]
+  normalize_std: [0.2023, 0.1994, 0.2010]
+
+experts:
+  source: chenyaofo/pytorch-cifar-models
+  source_revision: 786c16252c0fc58ee9adac063f8337cc4a7a497a
+  feature_extractor: shufflenetv2_x0_5
+  # Static accuracy-cost boundary retained for plots and comparisons only.
+  pareto_boundary_models:
+    - shufflenetv2_x0_5
+    - mobilenetv2_x0_5
+    - shufflenetv2_x1_0
+    - mobilenetv2_x0_75
+    - mobilenetv2_x1_0
+    - resnet44
+    - resnet56
+    - repvgg_a0
+    - repvgg_a1
+    - repvgg_a2
+  # Only these four models produce routing labels and dispatcher outputs.
+  candidates:
+    - shufflenetv2_x0_5
+    - mobilenetv2_x0_5
+    - resnet56
+    - repvgg_a1
+  cost_source: catalog_madds
+  mac_to_flop: 2
+
+dispatcher:
+  epochs: 20
+  batch_size: 256
+  optimizer: adam
+  learning_rate: 0.001
+  weight_decay: 0.0
+  ens_beta: 0.9999
+  normalize_class_weights: mean_one
+
+fixed_solution:
+  weighting: INS
+  # Paper-style directional seed: under-routing is expensive, over-routing is cheap.
+  underestimation_penalty: 10.0
+  overestimation_penalty: 0.001
+
+nsga2:
+  population_size: 50
+  generations: 50
+  crossover: SBX
+  crossover_eta: 20
+  crossover_probability: 0.9
+  mutation: polynomial
+  mutation_eta: 25
+  mutation_probability: null
+  penalty_min: 0.0
+  penalty_max: 100.0
+  weighting_schemes: [INS, ISNS, ENS]

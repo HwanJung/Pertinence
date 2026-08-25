@@ -1,0 +1,63 @@
+schema_version: 1
+assets:
+  - kind: dataset
+    name: cifar10_python_tar
+    url: https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz
+    sha256: 6d958be074577803d12ecdefd02955f39262c83c16fe9348329d7fe0b5c001ce
+    path: datasets/cifar-10-python.tar.gz
+  - kind: source
+    name: chenyaofo_pytorch_cifar_models
+    url: https://github.com/chenyaofo/pytorch-cifar-models/archive/786c16252c0fc58ee9adac063f8337cc4a7a497a.tar.gz
+    sha256: 04e70970967809dd30216fce0df1533d7ad4bfd2bc0ef0a75a8734c948ae2f26
+    path: sources/pytorch-cifar-models-786c16252c0fc58ee9adac063f8337cc4a7a497a.tar.gz
+    revision: 786c16252c0fc58ee9adac063f8337cc4a7a497a
+  - kind: checkpoint
+    name: shufflenetv2_x0_5
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/shufflenetv2/cifar10_shufflenetv2_x0_5-1308b4e9.pt
+    sha256: 1308b4e9c4f88656a3b09775c273fc5ffe8fca9c84044123cf3d138c8dec10bd
+    path: checkpoints/cifar10_shufflenetv2_x0_5-1308b4e9.pt
+  - kind: checkpoint
+    name: mobilenetv2_x0_5
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/mobilenetv2/cifar10_mobilenetv2_x0_5-ca14ced9.pt
+    sha256: ca14ced9679a365262eb6ec98fd347deafcc06af2d0457d8b80424cfe8caaac8
+    path: checkpoints/cifar10_mobilenetv2_x0_5-ca14ced9.pt
+  - kind: checkpoint
+    name: shufflenetv2_x1_0
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/shufflenetv2/cifar10_shufflenetv2_x1_0-98807be3.pt
+    sha256: 98807be3dc892c61e7be9930e1bd2fbf801e58a21e0ec17efc79a24ff5047285
+    path: checkpoints/cifar10_shufflenetv2_x1_0-98807be3.pt
+  - kind: checkpoint
+    name: mobilenetv2_x0_75
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/mobilenetv2/cifar10_mobilenetv2_x0_75-a53c314e.pt
+    sha256: a53c314e0e48bbeaf8447553f656475caae11327f3132b32a181c2b1ff375fe2
+    path: checkpoints/cifar10_mobilenetv2_x0_75-a53c314e.pt
+  - kind: checkpoint
+    name: mobilenetv2_x1_0
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/mobilenetv2/cifar10_mobilenetv2_x1_0-fe6a5b48.pt
+    sha256: fe6a5b4808c9b1b7a440c02fa19a10dc3d8ea5c63e38381b2f60b1937958735e
+    path: checkpoints/cifar10_mobilenetv2_x1_0-fe6a5b48.pt
+  - kind: checkpoint
+    name: resnet44
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/resnet/cifar10_resnet44-2a3cabcb.pt
+    sha256: 2a3cabcbd9a591071cab99c0bcb6aa4f9baf3f73a43e6c2f67aa3ac18342388d
+    path: checkpoints/cifar10_resnet44-2a3cabcb.pt
+  - kind: checkpoint
+    name: resnet56
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/resnet/cifar10_resnet56-187c023a.pt
+    sha256: 187c023aee0c9cf3093a682d9447a538cbaf5489f7ae78a7df4edf2246ce380b
+    path: checkpoints/cifar10_resnet56-187c023a.pt
+  - kind: checkpoint
+    name: repvgg_a0
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/repvgg/cifar10_repvgg_a0-ef08a50e.pt
+    sha256: ef08a50eb8d792f2e493229d350c2ef301a5dff4f7630793aa4ed0bb48ad6621
+    path: checkpoints/cifar10_repvgg_a0-ef08a50e.pt
+  - kind: checkpoint
+    name: repvgg_a1
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/repvgg/cifar10_repvgg_a1-38d2431b.pt
+    sha256: 38d2431b4e0a8cea644e260d3b38d919aed26ad1d6f270ebd9c252e7c4f61a2a
+    path: checkpoints/cifar10_repvgg_a1-38d2431b.pt
+  - kind: checkpoint
+    name: repvgg_a2
+    url: https://github.com/chenyaofo/pytorch-cifar-models/releases/download/repvgg/cifar10_repvgg_a2-09488915.pt
+    sha256: 0948891551f58cc8928c7fc7c6e26b1c54ec441e56c2e763f807ed2c0dcf6144
+    path: checkpoints/cifar10_repvgg_a2-09488915.pt
