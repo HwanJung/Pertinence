@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 import weakref
 
 import numpy as np
@@ -12,6 +13,7 @@ from torch.utils.data import Dataset
 from pertinence.cache import (
     CACHE_SCHEMA_VERSION,
     CacheBuildRequest,
+    CacheError,
     CacheFingerprintMismatch,
     build_prediction_caches,
     cache_path,
@@ -73,6 +75,9 @@ def _request(tmp_path: Path) -> CacheBuildRequest:
         batch_size=2,
         num_workers=0,
         device="cpu",
+        expert_top1_max_regression_percentage_points=0.0,
+        expert_top1_max_improvement_percentage_points=0.0,
+        catalog_top1_percentages={"model_0": 100.0, "model_1": 0.0},
     )
 
 
@@ -165,6 +170,28 @@ def test_matching_existing_caches_are_reused_without_model_execution(tmp_path: P
         request, _splits(), model_loader=forbidden_loader
     )
     assert {result.status for result in report.results} == {"reused"}
+    assert report.expert_accuracy_gate == "passed"
+
+
+def test_accuracy_gate_fails_before_new_caches_are_committed(tmp_path: Path) -> None:
+    request = replace(
+        _request(tmp_path),
+        catalog_top1_percentages={"model_0": 99.0, "model_1": 0.0},
+        expert_top1_max_improvement_percentage_points=0.5,
+    )
+
+    with pytest.raises(CacheError, match="expert accuracy gate failed"):
+        build_prediction_caches(
+            request,
+            _splits(),
+            train_dataset=_VectorDataset([0, 1, 2, 3]),
+            test_dataset=_VectorDataset([0, 1, 2, 3]),
+            model_loader=lambda name, **_kwargs: _LocalExpert(
+                shift=0 if name == "model_0" else 1
+            ),
+        )
+
+    assert not request.output_directory.exists()
 
 
 def test_fingerprint_mismatch_fails_before_model_execution(tmp_path: Path) -> None:

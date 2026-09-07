@@ -98,9 +98,14 @@ Pareto 경계 10종의 정적 수치는 고정 catalog/CSV에서 읽는다. Rout
 - extractor final Linear 직전 feature
 - checkpoint/source/config/split fingerprint
 
-4개 routing 후보의 baseline Top-1이 upstream 보고값과 허용 오차 내에
-들어오기 전에는 dispatcher 학습을 시작하지 않는다. RepVGG는 checkpoint 원형의
-multi-branch 모델을 쓰며 deploy fusion은 별도 실험으로 분리한다.
+Cache를 새로 기록하기 전에 공식 test 10,000장 전체에서 4개 routing 후보의
+Top-1을 upstream 보고값과 자동 비교한다. Catalog는 학습 로그의 best-validation
+값이고 고정 checkpoint 재평가는 runtime에 따라 소폭 달라질 수 있으므로, 허용
+delta는 config에 `-0.25pp <= measured - catalog <= +0.75pp`로 고정한다. 하나라도
+벗어나면 새 cache를 기록하지 않고 실패한다. 이는 고정 expert 입력 무결성
+gate이며 dispatcher 해 선택에는 사용하지 않는다.
+RepVGG는 checkpoint 원형의 multi-branch 모델을 쓰며 deploy fusion은 별도
+실험으로 분리한다.
 
 나머지 6종은 routing label, FC class, penalty gene 및 평균 동적 비용에
 포함하지 않는다. 최종 accuracy–MFLOPs 그림에는 10개 정적 모델 경계와
@@ -128,6 +133,13 @@ optimizer: Adam, lr=1e-3
 
 optimizer와 learning rate는 논문 미공개 값이므로 설정에 노출된 재현
 가정이다. Loss는 논문 수식을 문자 그대로 적용한다.
+
+공개 checkpoint는 official train을 이미 학습했기 때문에 cheapest-correct
+dispatcher label의 일부 고비용 class가 0건일 수 있다. 이 경우 INS/ISNS/ENS는
+관측 class에 대해서만 계산하고 관측 class weight의 평균을 1로 normalize한다.
+미관측 class weight는 0으로 둔다. 해당 class는 true label로 loss에 등장하지
+않으므로 loss 값에는 영향을 주지 않으며, FC 출력 차원과 expert pool은 유지한다.
+미관측 class에 대한 직접 supervised signal이 없다는 점은 결과 제한으로 보고한다.
 
 ```python
 base = cross_entropy(logits, route, reduction="none")
@@ -190,6 +202,7 @@ overhead를 포함한 평균 비용이다.
 - FC optimizer, learning rate, batch size, scheduler, initialization
 - dispatcher train feature augmentation 여부
 - ENS beta와 class-weight normalization
+- dispatcher train에서 미관측 route class의 weight를 0으로 두는 처리
 - polynomial mutation probability
 - categorical weighting gene 처리
 - penalty discretization
@@ -198,9 +211,11 @@ overhead를 포함한 평균 비용이다.
 서로 맞지 않는다. 기본 GA는 연속 [0,100], 고정 재현 경로는 0.001을
 허용해 두 경우를 섞지 않는다.
 
-## 실행하지 않은 범위
+## 실행 전 검증과 실제 실험의 경계
 
-이번 구성 작업에서는 다음 계산을 실행하지 않는다.
+CPU preflight는 실제 local source/checkpoint를 로드해 각 routing expert에 2장의
+smoke forward를 수행할 수 있다. 이는 shape와 연결 상태만 확인하며 accuracy
+결과를 생성하지 않는다. 다음 계산부터 실제 실험 단계다.
 
 - 60,000장에 대한 4개 routing 전문가 GPU 추론
 - feature/prediction cache 생성
@@ -208,5 +223,6 @@ overhead를 포함한 평균 비용이다.
 - 50 x 50 x 20 epoch NSGA-II
 - final 2,000장 결과 산출
 
-자산 다운로드·해시 검증, 정적 검사와 synthetic unit test는 실험 결과를
-생성하는 작업이 아니므로 환경 준비 검증 범위에 포함한다.
+자산 다운로드·해시 검증, 정적 검사, synthetic unit test와 2-sample smoke는
+실험 결과를 생성하는 작업이 아니므로 환경 준비 검증 범위에 포함한다. 실제 연속
+실행 명령과 중단 대응은 `runbook.ko.md`를 따른다.

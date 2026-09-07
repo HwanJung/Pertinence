@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build the CIFAR-10 Pareto front for chenyaofo/pytorch-cifar-models.
+"""Build the CIFAR-100 Pareto front for chenyaofo/pytorch-cifar-models.
 
 The source model zoo reports Top-1/Top-5 accuracy, parameter count, and MAdds
-for a single public CIFAR-10 checkpoint per model.  The primary compute axis in
-this analysis is therefore the reported MAdds value.  A strict MFLOPs column is
-also emitted using the project-wide convention ``1 MAC = 2 FLOPs``; multiplying
+for a single public CIFAR-100 checkpoint per model. The primary compute axis in
+this analysis is therefore the reported MAdds value. An MFLOPs column is also
+emitted using the project-wide convention ``1 MAC = 2 FLOPs``; multiplying
 every x value by two does not change Pareto membership.
 """
 
@@ -20,35 +20,35 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, LogLocator
 
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA_PATH = ROOT / "data" / "chenyaofo_cifar10_models.csv"
-FIGURE_DIR = ROOT / "figures"
-SOURCE_URL = "https://github.com/chenyaofo/pytorch-cifar-models#model-zoo"
-SNAPSHOT_DATE = "2026-08-24"
+EXPERIMENT_ROOT = Path(__file__).resolve().parents[1]
+DATA_PATH = EXPERIMENT_ROOT / "data" / "model_catalog.csv"
+FIGURE_DIR = EXPERIMENT_ROOT / "figures"
+SOURCE_URL = "https://github.com/chenyaofo/pytorch-cifar-models#cifar-100"
+SNAPSHOT_DATE = "2026-09-06"
 
 
 # model, Top-1 (%), Top-5 (%), parameters (M), MAdds (M)
-# Values are transcribed from the repository's CIFAR-10 Model Zoo table.
+# Values are transcribed from the repository's CIFAR-100 Model Zoo table.
 RAW_ROWS = [
-    ("resnet20", 92.60, 99.81, 0.27, 40.81),
-    ("resnet32", 93.53, 99.77, 0.47, 69.12),
-    ("resnet44", 94.01, 99.77, 0.66, 97.44),
-    ("resnet56", 94.37, 99.83, 0.86, 125.75),
-    ("vgg11_bn", 92.79, 99.72, 9.76, 153.29),
-    ("vgg13_bn", 94.00, 99.77, 9.94, 228.79),
-    ("vgg16_bn", 94.16, 99.71, 15.25, 313.73),
-    ("vgg19_bn", 93.91, 99.64, 20.57, 398.66),
-    ("mobilenetv2_x0_5", 92.88, 99.86, 0.70, 27.97),
-    ("mobilenetv2_x0_75", 93.72, 99.79, 1.37, 59.31),
-    ("mobilenetv2_x1_0", 93.79, 99.73, 2.24, 87.98),
-    ("mobilenetv2_x1_4", 94.22, 99.80, 4.33, 170.07),
-    ("shufflenetv2_x0_5", 90.13, 99.70, 0.35, 10.90),
-    ("shufflenetv2_x1_0", 92.98, 99.73, 1.26, 45.00),
-    ("shufflenetv2_x1_5", 93.55, 99.77, 2.49, 94.26),
-    ("shufflenetv2_x2_0", 93.81, 99.79, 5.37, 187.81),
-    ("repvgg_a0", 94.39, 99.82, 7.84, 489.08),
-    ("repvgg_a1", 94.89, 99.83, 12.82, 851.33),
-    ("repvgg_a2", 94.98, 99.82, 26.82, 1850.10),
+    ("resnet20", 68.83, 91.01, 0.28, 40.82),
+    ("resnet32", 70.16, 90.89, 0.47, 69.13),
+    ("resnet44", 71.63, 91.58, 0.67, 97.44),
+    ("resnet56", 72.63, 91.94, 0.86, 125.75),
+    ("vgg11_bn", 70.78, 88.87, 9.80, 153.34),
+    ("vgg13_bn", 74.63, 91.09, 9.99, 228.84),
+    ("vgg16_bn", 74.00, 90.56, 15.30, 313.77),
+    ("vgg19_bn", 73.87, 90.13, 20.61, 398.71),
+    ("mobilenetv2_x0_5", 70.88, 91.72, 0.82, 28.08),
+    ("mobilenetv2_x0_75", 73.61, 92.61, 1.48, 59.43),
+    ("mobilenetv2_x1_0", 74.20, 92.82, 2.35, 88.09),
+    ("mobilenetv2_x1_4", 75.98, 93.44, 4.50, 170.23),
+    ("shufflenetv2_x0_5", 67.82, 89.93, 0.44, 10.99),
+    ("shufflenetv2_x1_0", 72.39, 91.46, 1.36, 45.09),
+    ("shufflenetv2_x1_5", 73.91, 92.13, 2.58, 94.35),
+    ("shufflenetv2_x2_0", 75.35, 92.62, 5.55, 188.00),
+    ("repvgg_a0", 75.22, 92.93, 7.96, 489.19),
+    ("repvgg_a1", 76.12, 92.71, 12.94, 851.44),
+    ("repvgg_a2", 77.18, 93.51, 26.94, 1850.22),
 ]
 
 EXPECTED_FRONT = {
@@ -57,9 +57,7 @@ EXPECTED_FRONT = {
     "shufflenetv2_x1_0",
     "mobilenetv2_x0_75",
     "mobilenetv2_x1_0",
-    "resnet44",
-    "resnet56",
-    "repvgg_a0",
+    "mobilenetv2_x1_4",
     "repvgg_a1",
     "repvgg_a2",
 }
@@ -178,11 +176,9 @@ def write_figures(rows: list[dict[str, object]]) -> None:
         "shufflenetv2_x0_5": (7, -3, "left", "top"),
         "mobilenetv2_x0_5": (7, 7, "left", "bottom"),
         "shufflenetv2_x1_0": (7, -8, "left", "top"),
-        "mobilenetv2_x0_75": (7, 7, "left", "bottom"),
-        "mobilenetv2_x1_0": (7, -8, "left", "top"),
-        "resnet44": (7, 7, "left", "bottom"),
-        "resnet56": (7, 7, "left", "bottom"),
-        "repvgg_a0": (-7, 7, "right", "bottom"),
+        "mobilenetv2_x0_75": (-7, -8, "right", "top"),
+        "mobilenetv2_x1_0": (7, 8, "left", "bottom"),
+        "mobilenetv2_x1_4": (7, 7, "left", "bottom"),
         "repvgg_a1": (-7, 7, "right", "bottom"),
         "repvgg_a2": (-7, -7, "right", "top"),
     }
@@ -203,13 +199,13 @@ def write_figures(rows: list[dict[str, object]]) -> None:
     ax.set_xscale("log")
     ax.xaxis.set_major_locator(LogLocator(base=10, numticks=5))
     ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
-    ax.set_xlabel("Compute per CIFAR-10 image (million multiply-adds, log scale)")
+    ax.set_xlabel("Compute per CIFAR-100 image (million multiply-adds, log scale)")
     ax.set_ylabel("Reported Top-1 accuracy (%)")
-    ax.set_title("CIFAR-10 accuracy–compute Pareto front")
+    ax.set_title("CIFAR-100 accuracy–compute Pareto front")
     ax.text(
         0.01,
         0.015,
-        "Source: chenyaofo/pytorch-cifar-models · 19 public checkpoints · snapshot 2026-08-24",
+        "Source: chenyaofo/pytorch-cifar-models · 19 public checkpoints · snapshot 2026-09-06",
         transform=ax.transAxes,
         fontsize=8.5,
         color="#58636E",
@@ -220,7 +216,7 @@ def write_figures(rows: list[dict[str, object]]) -> None:
 
     for extension in ("png", "svg"):
         fig.savefig(
-            FIGURE_DIR / f"chenyaofo_cifar10_accuracy_madds_pareto.{extension}",
+            FIGURE_DIR / f"model_pareto.{extension}",
             bbox_inches="tight",
         )
     plt.close(fig)

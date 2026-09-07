@@ -52,8 +52,15 @@ class ExperimentConfig:
         return int(self.raw["experiment"]["seed"])
 
     @property
+    def workspace_root(self) -> Path:
+        for candidate in (self.path.parent, *self.path.parents):
+            if (candidate / "pyproject.toml").is_file():
+                return candidate
+        raise ValueError(f"cannot locate workspace root above config: {self.path}")
+
+    @property
     def artifacts_root(self) -> Path:
-        return (self.path.parent.parent / self.raw["assets"]["root"]).resolve()
+        return (self.workspace_root / self.raw["assets"]["root"]).resolve()
 
 
 def load_config(path: str | Path) -> ExperimentConfig:
@@ -98,3 +105,11 @@ def validate_config(config: ExperimentConfig) -> None:
         raise ValueError("the paper reproduction requires polynomial mutation")
     if float(config.raw["experts"]["mac_to_flop"]) != 2.0:
         raise ValueError("the project-wide convention is fixed to 1 MAC = 2 FLOPs")
+    validation = config.raw["validation"]
+    for field in (
+        "expert_top1_max_regression_percentage_points",
+        "expert_top1_max_improvement_percentage_points",
+    ):
+        value = float(validation[field])
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"validation.{field} must be in [0, 1]")

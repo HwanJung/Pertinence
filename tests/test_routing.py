@@ -24,6 +24,16 @@ def test_class_weights_favor_minority(scheme) -> None:
     assert weights.mean().item() == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("scheme", ["INS", "ISNS", "ENS"])
+def test_class_weights_zero_unobserved_classes_and_normalize_observed(scheme) -> None:
+    labels = torch.tensor([0, 0, 0, 1])
+    weights = class_weights(labels, 3, scheme)
+
+    assert weights[2].item() == 0.0
+    assert weights[:2].mean().item() == pytest.approx(1.0)
+    assert torch.isfinite(weights).all()
+
+
 def test_paper_loss_has_zero_contribution_for_correct_argmax() -> None:
     logits = torch.tensor([[4.0, 0.0], [3.0, 1.0]], requires_grad=True)
     targets = torch.tensor([0, 1])

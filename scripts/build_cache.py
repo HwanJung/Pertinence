@@ -26,6 +26,7 @@ from pertinence.cache import (  # noqa: E402
 )
 from pertinence.config import load_config  # noqa: E402
 from pertinence.data import evaluation_transform, load_cifar10, make_splits  # noqa: E402
+from pertinence.reproducibility import seed_everything  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         config = load_config(arguments.config)
+        seed_everything(config.seed)
         manifest = load_asset_manifest(arguments.manifest)
         if not arguments.dry_run:
             prepare_assets(manifest, arguments.artifacts_dir, verify_only=True)

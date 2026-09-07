@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader, Dataset
 from .assets import AssetManifest
 from .config import ExperimentConfig
 from .data import SplitIndices
-from .experts import FrozenFeatureExtractor, load_expert
+from .experts import EXPERTS_BY_NAME, FrozenFeatureExtractor, load_expert
 from .reproducibility import canonical_json_hash
 
 
@@ -48,6 +48,18 @@ class CacheBuildRequest:
     batch_size: int
     num_workers: int
     device: str
+    expert_top1_max_regression_percentage_points: float
+    expert_top1_max_improvement_percentage_points: float
+    catalog_top1_percentages: Mapping[str, float]
+
+
+@dataclass(frozen=True, slots=True)
+class ExpertAccuracyValidation:
+    model: str
+    catalog_top1_percentage: float
+    measured_top1_percentage: float
+    top1_delta_percentage_points: float
+    absolute_delta_percentage_points: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +75,17 @@ class SplitCacheResult:
 class CacheBuildReport:
     schema_version: int
     results: tuple[SplitCacheResult, ...]
+    expert_accuracy_gate: Literal["planned", "passed"]
+    expert_accuracy_validation: tuple[ExpertAccuracyValidation, ...]
 
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
             "results": [asdict(result) for result in self.results],
+            "expert_accuracy_gate": self.expert_accuracy_gate,
+            "expert_accuracy_validation": [
+                asdict(result) for result in self.expert_accuracy_validation
+            ],
         }
 
 
@@ -138,7 +156,90 @@ def make_cache_request(
         batch_size=int(config.raw["data"]["batch_size"]),
         num_workers=int(config.raw["data"]["num_workers"]),
         device=str(device or config.raw["experiment"]["device"]),
+        expert_top1_max_regression_percentage_points=float(
+            config.raw["validation"]["expert_top1_max_regression_percentage_points"]
+        ),
+        expert_top1_max_improvement_percentage_points=float(
+            config.raw["validation"]["expert_top1_max_improvement_percentage_points"]
+        ),
+        catalog_top1_percentages={
+            name: EXPERTS_BY_NAME[name].top1_accuracy_pct for name in config.candidates
+        },
     )
+
+
+def _load_reused_prediction_tensors(
+    path: Path,
+) -> tuple[Tensor, Tensor]:
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    predictions = payload.get("expert_predictions")
+    targets = payload.get("targets")
+    if not isinstance(predictions, Tensor) or not isinstance(targets, Tensor):
+        raise CacheFingerprintMismatch(f"cache prediction tensors are missing: {path}")
+    return predictions, targets
+
+
+def _validate_official_test_accuracy(
+    request: CacheBuildRequest,
+    predictions_by_split: Mapping[str, Sequence[Tensor]],
+    targets_by_split: Mapping[str, Tensor],
+    paths: Mapping[str, Path],
+    reused: Mapping[str, bool],
+) -> tuple[ExpertAccuracyValidation, ...]:
+    split_predictions: list[Tensor] = []
+    split_targets: list[Tensor] = []
+    for split in ("ga_search", "final_evaluation"):
+        if reused[split]:
+            predictions, targets = _load_reused_prediction_tensors(paths[split])
+        else:
+            predictions = torch.stack(tuple(predictions_by_split[split]), dim=1)
+            targets = targets_by_split[split]
+        split_predictions.append(predictions)
+        split_targets.append(targets)
+
+    predictions = torch.cat(split_predictions, dim=0)
+    targets = torch.cat(split_targets, dim=0)
+    if (
+        predictions.ndim != 2
+        or predictions.shape[1] != len(request.model_order)
+        or targets.shape != (predictions.shape[0],)
+        or predictions.shape[0] == 0
+    ):
+        raise CacheError("expert accuracy gate received invalid test prediction tensors")
+
+    measured = predictions.eq(targets.unsqueeze(1)).float().mean(dim=0) * 100.0
+    results: list[ExpertAccuracyValidation] = []
+    failures: list[str] = []
+    for index, model_name in enumerate(request.model_order):
+        try:
+            catalog = float(request.catalog_top1_percentages[model_name])
+        except KeyError as error:
+            raise CacheError(f"catalog Top-1 is missing for expert {model_name!r}") from error
+        actual = float(measured[index])
+        signed_delta = actual - catalog
+        delta = abs(signed_delta)
+        results.append(
+            ExpertAccuracyValidation(
+                model=model_name,
+                catalog_top1_percentage=catalog,
+                measured_top1_percentage=actual,
+                top1_delta_percentage_points=signed_delta,
+                absolute_delta_percentage_points=delta,
+            )
+        )
+        if (
+            signed_delta < -request.expert_top1_max_regression_percentage_points
+            or signed_delta > request.expert_top1_max_improvement_percentage_points
+        ):
+            failures.append(
+                f"{model_name}: catalog={catalog:.2f}%, measured={actual:.2f}%, "
+                f"delta={signed_delta:+.2f}pp"
+            )
+    if failures:
+        raise CacheError(
+            "expert accuracy gate failed (no new cache was committed): " + "; ".join(failures)
+        )
+    return tuple(results)
 
 
 def route_labels_from_predictions(predictions: Tensor, targets: Tensor) -> Tensor:
@@ -378,6 +479,11 @@ def build_prediction_caches(
         raise ValueError("model_order must not be empty")
     if request.feature_extractor not in request.model_order:
         raise ValueError("feature extractor must be present in model_order")
+    if not (
+        0.0 <= request.expert_top1_max_regression_percentage_points <= 1.0
+        and 0.0 <= request.expert_top1_max_improvement_percentage_points <= 1.0
+    ):
+        raise ValueError("expert Top-1 gate bounds must be in [0, 1] percentage points")
     missing_checkpoints = set(request.model_order) - set(request.checkpoint_paths)
     if missing_checkpoints:
         raise ValueError(f"checkpoint paths missing for: {sorted(missing_checkpoints)}")
@@ -412,6 +518,8 @@ def build_prediction_caches(
                 )
                 for name in SPLIT_NAMES
             ),
+            expert_accuracy_gate="planned",
+            expert_accuracy_validation=(),
         )
 
     reused = {
@@ -427,6 +535,9 @@ def build_prediction_caches(
     }
     pending = [name for name in SPLIT_NAMES if not reused[name]]
     if not pending:
+        expert_validation = _validate_official_test_accuracy(
+            request, {}, {}, paths, reused
+        )
         return CacheBuildReport(
             schema_version=CACHE_SCHEMA_VERSION,
             results=tuple(
@@ -439,6 +550,8 @@ def build_prediction_caches(
                 )
                 for name in SPLIT_NAMES
             ),
+            expert_accuracy_gate="passed",
+            expert_accuracy_validation=expert_validation,
         )
     if train_dataset is None or test_dataset is None:
         raise ValueError("train_dataset and test_dataset are required outside dry-run mode")
@@ -486,6 +599,17 @@ def build_prediction_caches(
         gc.collect()
         if device.type == "cuda":
             torch.cuda.empty_cache()
+
+    # Validate the immutable experts on all 10,000 official test samples before
+    # committing any newly inferred cache. This is an input-integrity gate, not
+    # a dispatcher-selection metric.
+    expert_validation = _validate_official_test_accuracy(
+        request,
+        predictions_by_split,
+        targets_by_split,
+        paths,
+        reused,
+    )
 
     results: list[SplitCacheResult] = []
     for split in SPLIT_NAMES:
@@ -536,4 +660,9 @@ def build_prediction_caches(
             )
         )
 
-    return CacheBuildReport(schema_version=CACHE_SCHEMA_VERSION, results=tuple(results))
+    return CacheBuildReport(
+        schema_version=CACHE_SCHEMA_VERSION,
+        results=tuple(results),
+        expert_accuracy_gate="passed",
+        expert_accuracy_validation=expert_validation,
+    )

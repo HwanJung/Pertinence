@@ -310,7 +310,7 @@ def run_search(config: ExperimentConfig, cache_directory: Path, output: Path) ->
         penalty_max=ga_config.penalty_max,
         keep_dispatcher_states=True,
     )
-    run = run_nsga2(problem, config=ga_config, seed=config.seed)
+    run = run_nsga2(problem, config=ga_config, seed=config.seed, verbose=True)
     pareto_ids = {record.evaluation_id for record in run.pareto_evaluations}
     records = [
         {

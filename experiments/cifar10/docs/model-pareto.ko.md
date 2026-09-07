@@ -11,7 +11,7 @@
 
 원 출처가 제공하는 연산 지표는 `#MAdds(M)`이므로 Pareto 판정에는 이 값을 직접 사용했다. CSV에는 프로젝트의 통일된 규칙인 `1 MAC = 2 FLOPs`로 환산한 MFLOPs도 함께 기록했다. 모든 연산량에 같은 양의 상수 2를 곱하므로 MAdds와 MFLOPs 중 어느 것을 사용해도 Pareto 판정은 같다.
 
-![CIFAR-10 Pareto front](../figures/chenyaofo_cifar10_accuracy_madds_pareto.svg)
+![CIFAR-10 Pareto front](../figures/model_pareto.svg)
 
 ## 결과
 
@@ -42,13 +42,13 @@ PERTINENCE의 전문가 풀을 정할 때 Pareto 여부만으로 최종 선택�
 
 ## 산출물
 
-- 전체 19개 모델과 Pareto 판정: [`data/chenyaofo_cifar10_models.csv`](../data/chenyaofo_cifar10_models.csv)
-- 벡터 그림: [`figures/chenyaofo_cifar10_accuracy_madds_pareto.svg`](../figures/chenyaofo_cifar10_accuracy_madds_pareto.svg)
-- 래스터 그림: [`figures/chenyaofo_cifar10_accuracy_madds_pareto.png`](../figures/chenyaofo_cifar10_accuracy_madds_pareto.png)
-- 재생성 코드: [`scripts/build_chenyaofo_cifar10_pareto.py`](../scripts/build_chenyaofo_cifar10_pareto.py)
+- 전체 19개 모델과 Pareto 판정: [`data/model_catalog.csv`](../data/model_catalog.csv)
+- 벡터 그림: [`figures/model_pareto.svg`](../figures/model_pareto.svg)
+- 래스터 그림: [`figures/model_pareto.png`](../figures/model_pareto.png)
+- 재생성 코드: [`scripts/build_model_pareto.py`](../scripts/build_model_pareto.py)
 
 재생성 명령:
 
 ```bash
-python3 scripts/build_chenyaofo_cifar10_pareto.py
+python3 experiments/cifar10/scripts/build_model_pareto.py
 ```

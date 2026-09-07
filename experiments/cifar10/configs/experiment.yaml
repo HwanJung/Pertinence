@@ -2,11 +2,11 @@ experiment:
   name: cifar10_chenyaofo_pareto
   seed: 20260824
   device: cuda
-  output_dir: artifacts/runs/cifar10_pareto
+  output_dir: artifacts/cifar10/runs/pareto
 
 assets:
-  root: artifacts
-  manifest: configs/assets.yaml
+  root: artifacts/cifar10
+  manifest: experiments/cifar10/configs/assets.yaml
 
 data:
   dataset: CIFAR10
@@ -52,6 +52,14 @@ dispatcher:
   weight_decay: 0.0
   ens_beta: 0.9999
   normalize_class_weights: mean_one
+
+validation:
+  # Compared on the complete official CIFAR-10 test set before cache commit.
+  # Catalog values are best-validation training-log values. Pinned-checkpoint
+  # reevaluation may improve slightly, but a regression or a large unexplained
+  # improvement is rejected.
+  expert_top1_max_regression_percentage_points: 0.25
+  expert_top1_max_improvement_percentage_points: 0.75
 
 fixed_solution:
   weighting: INS

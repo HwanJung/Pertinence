@@ -445,4 +445,4 @@ MVP에서는 Kubeflow, autoscaling, 실시간 telemetry 기반 선택과 복잡�
 ## 참고 문서
 
 - [`docs/pertinence-paper-notes.ko.md`](../docs/pertinence-paper-notes.ko.md)
-- [`docs/reproduction-plan.ko.md`](../docs/reproduction-plan.ko.md)
+- [`experiments/cifar10/docs/reproduction-plan.ko.md`](../experiments/cifar10/docs/reproduction-plan.ko.md)

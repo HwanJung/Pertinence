@@ -215,8 +215,17 @@ def train_linear_dispatcher(
                     penalties,
                     weights,
                 )
+                if not torch.isfinite(loss):
+                    raise RuntimeError("dispatcher training produced a non-finite loss")
                 loss.backward()
                 optimizer.step()
+                if any(
+                    not torch.isfinite(parameter).all()
+                    for parameter in dispatcher.parameters()
+                ):
+                    raise RuntimeError(
+                        "dispatcher training produced non-finite parameters"
+                    )
                 batch_samples = int(batch_routes.shape[0])
                 total_loss += float(loss.detach()) * batch_samples
                 total_samples += batch_samples

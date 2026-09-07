@@ -37,21 +37,26 @@ def class_weights(
     normalize: bool = True,
 ) -> Tensor:
     counts = torch.bincount(route_labels, minlength=num_classes).to(torch.float64)
-    if torch.any(counts == 0):
-        missing = torch.where(counts == 0)[0].tolist()
-        raise ValueError(f"routing classes have no training samples: {missing}")
+    if counts.shape != (num_classes,):
+        raise ValueError("route label is outside the configured class range")
+    observed = counts > 0
+    if not torch.any(observed):
+        raise ValueError("at least one routing class must have training samples")
+    weights = torch.zeros_like(counts)
     if scheme == "INS":
-        weights = counts.reciprocal()
+        weights[observed] = counts[observed].reciprocal()
     elif scheme == "ISNS":
-        weights = counts.rsqrt()
+        weights[observed] = counts[observed].rsqrt()
     elif scheme == "ENS":
         if not 0.0 <= beta < 1.0:
             raise ValueError("ENS beta must satisfy 0 <= beta < 1")
-        weights = (1.0 - beta) / (1.0 - torch.pow(beta, counts))
+        weights[observed] = (1.0 - beta) / (
+            1.0 - torch.pow(beta, counts[observed])
+        )
     else:
         raise ValueError(f"unknown weighting scheme: {scheme}")
     if normalize:
-        weights = weights / weights.mean()
+        weights[observed] = weights[observed] / weights[observed].mean()
     return weights.to(dtype=torch.float32, device=route_labels.device)
 
 
@@ -99,4 +104,3 @@ class LinearDispatcher(nn.Module):
 
     def forward(self, features: Tensor) -> Tensor:
         return self.linear(features)
-

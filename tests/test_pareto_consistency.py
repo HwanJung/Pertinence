@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_computed_pareto_front_is_the_single_model_ordering_source() -> None:
-    with (ROOT / "data" / "chenyaofo_cifar10_models.csv").open(
+    with (ROOT / "experiments" / "cifar10" / "data" / "model_catalog.csv").open(
         encoding="utf-8", newline=""
     ) as handle:
         rows = tuple(csv.DictReader(handle))
@@ -23,7 +23,9 @@ def test_computed_pareto_front_is_the_single_model_ordering_source() -> None:
             key=lambda row: float(row["madds_m"]),
         )
     )
-    config = load_config(ROOT / "configs" / "cifar10_pareto.yaml")
+    config = load_config(
+        ROOT / "experiments" / "cifar10" / "configs" / "experiment.yaml"
+    )
 
     assert PARETO_MODELS == csv_pareto_models
     assert config.pareto_boundary_models == csv_pareto_models

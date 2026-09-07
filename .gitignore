@@ -6,4 +6,5 @@ __pycache__/
 .ruff_cache/
 
 # Downloaded datasets, upstream source, checkpoints, and experiment outputs.
+# Runtime data is partitioned as artifacts/cifar10/ and artifacts/cifar100/.
 artifacts/
