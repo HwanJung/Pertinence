@@ -405,6 +405,8 @@ def run_final(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+    from .pipeline_cli import add_commands
+    add_commands(subparsers)
     for name in ("baseline", "fixed", "search", "final"):
         command = subparsers.add_parser(name)
         command.add_argument("--config", type=Path, required=True)
@@ -418,6 +420,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if hasattr(args, "component_action"):
+            from .pipeline_cli import run_command
+            return run_command(args)
         config = load_config(args.config)
         seed_everything(config.seed)
         if args.command == "baseline":

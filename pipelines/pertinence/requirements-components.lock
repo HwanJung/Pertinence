@@ -1,0 +1,5 @@
+# Direct runtime pins used inside the five portable component containers.
+# Install after requirements.lock; the KFP SDK is only needed by the compiler.
+onnx==1.17.0
+onnxruntime==1.20.1
+pyarrow==19.0.1

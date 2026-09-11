@@ -70,6 +70,13 @@ preparation command; model loading never calls PyTorch Hub or a URL.
 
 ## Staged workflow
 
+The dataset-independent Kubeflow components also run locally with Parquet/ONNX
+bundles. They provide contract validation, separate routing caches, dispatcher
+search, final evaluation, and transactional SQLite registration. See the
+[local component guide](pipelines/pertinence/docs/local-components.ko.md)
+for packaging, CLI commands, and optional KFP IR compilation. No cluster setup
+is required for these local components.
+
 Run the read-only preflight before GPU inference. It verifies pinned package
 versions, every asset hash, extracted source bytes, CIFAR-10 sizes, free disk,
 the configured device, all four checkpoint loads, tiny real-model forwards,

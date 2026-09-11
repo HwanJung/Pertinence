@@ -701,20 +701,18 @@ pipelines/
   pertinence/
     components.py          # container component interface
     pipeline.py            # training DAG
-    compile.py             # pinned compiler entry point
+    Dockerfile             # shared component image build
+    requirements-components.lock
+    requirements-kfp.lock  # compiler 전용
     component_specs/       # 필요 시 독립 YAML specs
+    docs/
     tests/
       test_compile.py
       test_dag_contract.py
   assets/
     pipeline.py            # 승인형 asset bootstrap
-docker/
-  pertinence.Dockerfile
-requirements-kfp.lock      # compiler 전용
-scripts/
-  kfp_wrappers/            # artifact path ↔ 기존 CLI adapter
-docs/
-  kubeflow-pipeline-design.ko.md
+src/pertinence/
+  pipeline_cli.py          # artifact path ↔ component core adapter
 ```
 
 애플리케이션 dependency와 compiler dependency를 분리한다. `kfp`를 현재 학습 package의 필수
