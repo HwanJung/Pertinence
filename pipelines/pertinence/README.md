@@ -16,6 +16,8 @@ pipelines/pertinence/
 ```
 
 로컬 component 사용법은 [docs/local-components.ko.md](docs/local-components.ko.md)를 참고한다.
+Minikube에 KFP를 설치하고 image build부터 pipeline upload까지 재현하는 방법은
+[docs/local-kfp-cluster.ko.md](docs/local-kfp-cluster.ko.md)를 참고한다.
 다음 명령은 cluster 접속 없이 KFP IR만 생성한다.
 
 ```bash
