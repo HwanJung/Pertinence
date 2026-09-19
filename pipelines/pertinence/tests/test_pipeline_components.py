@@ -36,7 +36,11 @@ from pertinence.pipeline_artifacts import (
     write_json,
 )
 from pertinence.pipeline_cache import build_routing_dataset, load_cache, route_labels
-from pertinence.pipeline_registry import SQLiteRegistry, register_pareto_dispatchers
+from pertinence.pipeline_registry import (
+    SQLiteRegistry,
+    register_dispatcher_bundle,
+    register_pareto_dispatchers,
+)
 from pertinence.pipeline_search import evaluate_final, train_dispatcher
 from pertinence.pipeline_validation import validate_run_contract
 
@@ -265,6 +269,14 @@ def test_all_components_dynamic_and_registry_idempotent(
         registration_report=tmp_path / "registered-again.json",
     )
     assert first == second
+    bundled = register_dispatcher_bundle(
+        tmp_path / "evaluated",
+        registry_bundle=tmp_path / "registry-bundle",
+        registration_report=tmp_path / "registry-bundle-report.json",
+    )
+    assert bundled == first
+    assert (tmp_path / "registry-bundle" / "registry.sqlite3").is_file()
+    assert (tmp_path / "registry-bundle" / "registration-report.json").is_file()
     with sqlite3.connect(registry.path) as db:
         records = db.execute("SELECT metadata_json, checkpoint FROM dispatcher_versions").fetchall()
     assert len(records) == len(search["pareto_ids"])

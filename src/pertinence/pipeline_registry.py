@@ -7,7 +7,7 @@ from pathlib import Path
 import sqlite3
 from typing import Protocol
 
-from .pipeline_artifacts import read_sealed, safe_path, seal, write_json
+from .pipeline_artifacts import atomic_directory, read_sealed, safe_path, seal, write_json
 from .pipeline_search import validate_models, validate_search
 from .pipeline_validation import load_contract
 from .reproducibility import canonical_json_hash, sha256_file
@@ -143,4 +143,24 @@ def register_pareto_dispatchers(
             }
         ),
     )
+    return registered
+
+
+def register_dispatcher_bundle(
+    evaluated_bundle: Path,
+    *,
+    registry_bundle: Path,
+    registration_report: Path,
+) -> list[dict]:
+    """Create a run-scoped SQLite registry that KFP persists as an output artifact."""
+
+    with atomic_directory(registry_bundle) as stage:
+        staged_report = stage / "registration-report.json"
+        registered = register_pareto_dispatchers(
+            evaluated_bundle,
+            registration_report=staged_report,
+            registry=SQLiteRegistry(stage / "registry.sqlite3"),
+        )
+        report = read_sealed(staged_report)
+    write_json(registration_report, report)
     return registered

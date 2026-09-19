@@ -20,6 +20,7 @@ class PlatformProfile:
     max_image_pixels: int = 20_000_000
     max_sample_id_bytes: int = 512
     inference_batch_size: int = 32
+    onnx_intra_op_threads: int = 1
     device: str = "cpu"
     image_digest: str = "local"
 

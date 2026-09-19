@@ -8,14 +8,32 @@ from pathlib import Path
 
 from .bundle_data import package_dataset, package_experts
 from .contracts import PlatformProfile
+from .pipeline_bootstrap import export_cifar10_expert_bundle, prepare_cifar10_dataset_bundle
 from .pipeline_artifacts import artifact_sha256, local_path
 from .pipeline_cache import build_routing_dataset
-from .pipeline_registry import SQLiteRegistry, register_pareto_dispatchers
+from .pipeline_registry import (
+    SQLiteRegistry,
+    register_dispatcher_bundle,
+    register_pareto_dispatchers,
+)
 from .pipeline_search import evaluate_final, train_dispatcher
 from .pipeline_validation import validate_run_contract
 
 
 def add_commands(subparsers) -> None:
+    parser = subparsers.add_parser("prepare-dataset-bundle")
+    parser.add_argument("--cifar10-archive", required=True)
+    parser.add_argument("--cifar10-sha256", required=True)
+    parser.add_argument("--dataset-bundle", type=Path, required=True)
+    parser.add_argument("--bundle-sha256-output", type=Path, required=True)
+    parser.set_defaults(component_action="prepare-dataset-bundle")
+    parser = subparsers.add_parser("export-expert-bundle")
+    for expert in ("shufflenet", "mobilenet", "resnet56"):
+        parser.add_argument(f"--{expert}-checkpoint", required=True)
+        parser.add_argument(f"--{expert}-sha256", required=True)
+    parser.add_argument("--expert-bundle", type=Path, required=True)
+    parser.add_argument("--bundle-sha256-output", type=Path, required=True)
+    parser.set_defaults(component_action="export-expert-bundle")
     for command in ("package-dataset", "package-experts"):
         parser = subparsers.add_parser(command)
         parser.add_argument("--source", type=Path, required=True)
@@ -31,6 +49,7 @@ def add_commands(subparsers) -> None:
     for output in ("normalized-contract", "split-manifest", "validation-report"):
         parser.add_argument(f"--{output}", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--onnx-intra-op-threads", type=int, default=1)
     parser.add_argument("--image-digest", default="local")
     parser.set_defaults(component_action="validate-run")
     specifications = {
@@ -59,6 +78,11 @@ def add_commands(subparsers) -> None:
             "evaluated-bundle",
         ),
         "register-pareto-dispatchers": ("evaluated-bundle", "registration-report", "registry-db"),
+        "register-dispatcher-bundle": (
+            "evaluated-bundle",
+            "registry-bundle",
+            "registration-report",
+        ),
     }
     for command, arguments in specifications.items():
         parser = subparsers.add_parser(command)
@@ -71,14 +95,37 @@ def run_command(args: argparse.Namespace) -> int:
     values = vars(args).copy()
     action = values.pop("component_action")
     values.pop("command", None)
-    if action in {"package-dataset", "package-experts"}:
+    if action == "prepare-dataset-bundle":
+        digest = prepare_cifar10_dataset_bundle(
+            values["cifar10_archive"],
+            values["cifar10_sha256"],
+            values["dataset_bundle"],
+        )
+        values["bundle_sha256_output"].parent.mkdir(parents=True, exist_ok=True)
+        values["bundle_sha256_output"].write_text(digest, encoding="utf-8")
+    elif action == "export-expert-bundle":
+        digest = export_cifar10_expert_bundle(
+            values["shufflenet_checkpoint"],
+            values["shufflenet_sha256"],
+            values["mobilenet_checkpoint"],
+            values["mobilenet_sha256"],
+            values["resnet56_checkpoint"],
+            values["resnet56_sha256"],
+            values["expert_bundle"],
+        )
+        values["bundle_sha256_output"].parent.mkdir(parents=True, exist_ok=True)
+        values["bundle_sha256_output"].write_text(digest, encoding="utf-8")
+    elif action in {"package-dataset", "package-experts"}:
         function = package_dataset if action == "package-dataset" else package_experts
         print(function(local_path(values["source"]), values["output"]))
     elif action == "artifact-sha256":
         print(artifact_sha256(local_path(values["path"])))
     elif action == "validate-run":
         profile = replace(
-            PlatformProfile(), device=values.pop("device"), image_digest=values.pop("image_digest")
+            PlatformProfile(),
+            device=values.pop("device"),
+            image_digest=values.pop("image_digest"),
+            onnx_intra_op_threads=values.pop("onnx_intra_op_threads"),
         )
         validate_run_contract(**values, profile=profile)
     elif action == "build-routing-dataset":
@@ -90,6 +137,8 @@ def run_command(args: argparse.Namespace) -> int:
     elif action == "register-pareto-dispatchers":
         registry = SQLiteRegistry(values.pop("registry_db"))
         register_pareto_dispatchers(**values, registry=registry)
+    elif action == "register-dispatcher-bundle":
+        register_dispatcher_bundle(**values)
     return 0
 
 

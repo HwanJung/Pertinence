@@ -125,7 +125,12 @@ def validate_run_contract(
         smoke_images *= 2
     feature_dim = None
     for expert in chosen:
-        runtime = ExpertRuntime(expert_root, expert, device=platform.device)
+        runtime = ExpertRuntime(
+            expert_root,
+            expert,
+            device=platform.device,
+            intra_op_num_threads=platform.onnx_intra_op_threads,
+        )
         extractor = expert["id"] == routing["feature_extractor_id"]
         _, features = runtime.predict(smoke_images, features=extractor)
         _, single = runtime.predict(smoke_images[:1], features=extractor)

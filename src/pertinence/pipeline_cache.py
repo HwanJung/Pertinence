@@ -97,7 +97,12 @@ def build_routing_dataset(
                 {sample_id: (split_name, index) for index, sample_id in enumerate(ids[split_name])}
             )
         for expert_index, expert in enumerate(selected_experts(contract)):
-            runtime = ExpertRuntime(expert_root, expert, device=settings["device"])
+            runtime = ExpertRuntime(
+                expert_root,
+                expert,
+                device=settings["device"],
+                intra_op_num_threads=settings["onnx_intra_op_threads"],
+            )
             extractor = expert["id"] == routing["feature_extractor_id"]
             visited = set()
             for pool in ("train", "evaluation"):

@@ -11,7 +11,14 @@ from ..pipeline_artifacts import safe_path, verify_artifact
 
 
 class ExpertRuntime:
-    def __init__(self, root: Path, expert: dict, *, device: str = "cpu") -> None:
+    def __init__(
+        self,
+        root: Path,
+        expert: dict,
+        *,
+        device: str = "cpu",
+        intra_op_num_threads: int = 1,
+    ) -> None:
         import onnx
         import onnxruntime as ort
 
@@ -45,8 +52,10 @@ class ExpertRuntime:
             if "CUDAExecutionProvider" not in ort.get_available_providers():
                 raise ValueError("CUDA ONNX Runtime provider is not installed")
             providers.insert(0, "CUDAExecutionProvider")
+        if type(intra_op_num_threads) is not int or intra_op_num_threads < 1:
+            raise ValueError("ONNX Runtime intra-op thread count must be a positive integer")
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 1
+        options.intra_op_num_threads = intra_op_num_threads
         options.inter_op_num_threads = 1
         self.session = ort.InferenceSession(model.SerializeToString(), options, providers=providers)
         inputs = self.session.get_inputs()

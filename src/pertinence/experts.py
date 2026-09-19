@@ -350,7 +350,7 @@ class FrozenFeatureExtractor(nn.Module):
                 f"expected final nn.Linear to run exactly once, observed {len(captured)} calls"
             )
         features = captured[0]
-        if features.shape[-1] != self.feature_dim:
+        if not torch.jit.is_tracing() and features.shape[-1] != self.feature_dim:
             raise RuntimeError(
                 f"captured feature width {features.shape[-1]} does not match "
                 f"classifier input width {self.feature_dim}"

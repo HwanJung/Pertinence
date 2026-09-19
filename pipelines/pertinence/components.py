@@ -1,17 +1,75 @@
-"""KFP v2 container interfaces; no cluster access occurs when creating these."""
+"""KFP v2 CPU container interfaces; creating them never contacts a cluster."""
 
 import re
 
 from kfp import dsl
-from kfp.dsl import Artifact, Input, Output
+from kfp.dsl import Artifact, Input, Output, OutputPath
 
 
-def make_components(image: str, *, device: str = "cpu", registry_db: str = "/registry/registry.db"):
+def make_components(image: str, *, cpu_threads: int = 4):
     if not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image):
         raise ValueError("component image must be pinned by @sha256 digest")
-    if device not in {"cpu", "cuda"}:
-        raise ValueError("device must be cpu or cuda")
+    if type(cpu_threads) is not int or cpu_threads < 1:
+        raise ValueError("cpu_threads must be a positive integer")
     command = ["python", "-m", "pertinence.pipeline_cli"]
+
+    @dsl.container_component
+    def prepare_dataset_bundle(
+        cifar10_archive: Input[Artifact],
+        cifar10_sha256: str,
+        dataset_bundle: Output[Artifact],
+        dataset_bundle_sha256: OutputPath(str),
+    ):
+        return dsl.ContainerSpec(
+            image=image,
+            command=command,
+            args=[
+                "prepare-dataset-bundle",
+                "--cifar10-archive",
+                cifar10_archive.path,
+                "--cifar10-sha256",
+                cifar10_sha256,
+                "--dataset-bundle",
+                dataset_bundle.path,
+                "--bundle-sha256-output",
+                dataset_bundle_sha256,
+            ],
+        )
+
+    @dsl.container_component
+    def export_expert_bundle(
+        shufflenet_checkpoint: Input[Artifact],
+        shufflenet_sha256: str,
+        mobilenet_checkpoint: Input[Artifact],
+        mobilenet_sha256: str,
+        resnet56_checkpoint: Input[Artifact],
+        resnet56_sha256: str,
+        expert_bundle: Output[Artifact],
+        expert_bundle_sha256: OutputPath(str),
+    ):
+        return dsl.ContainerSpec(
+            image=image,
+            command=command,
+            args=[
+                "export-expert-bundle",
+                "--shufflenet-checkpoint",
+                shufflenet_checkpoint.path,
+                "--shufflenet-sha256",
+                shufflenet_sha256,
+                "--mobilenet-checkpoint",
+                mobilenet_checkpoint.path,
+                "--mobilenet-sha256",
+                mobilenet_sha256,
+                "--resnet56-checkpoint",
+                resnet56_checkpoint.path,
+                "--resnet56-sha256",
+                resnet56_sha256,
+                "--expert-bundle",
+                expert_bundle.path,
+                "--bundle-sha256-output",
+                expert_bundle_sha256,
+            ],
+        )
 
     @dsl.container_component
     def validate_run_contract(
@@ -49,7 +107,9 @@ def make_components(image: str, *, device: str = "cpu", registry_db: str = "/reg
                 "--validation-report",
                 validation_report.path,
                 "--device",
-                device,
+                "cpu",
+                "--onnx-intra-op-threads",
+                str(cpu_threads),
                 "--image-digest",
                 image.split("@", 1)[1],
             ],
@@ -143,28 +203,31 @@ def make_components(image: str, *, device: str = "cpu", registry_db: str = "/reg
         )
 
     @dsl.container_component
-    def register_pareto_dispatchers(
+    def register_dispatchers(
         evaluated_bundle: Input[Artifact],
+        registry_bundle: Output[Artifact],
         registration_report: Output[Artifact],
     ):
         return dsl.ContainerSpec(
             image=image,
             command=command,
             args=[
-                "register-pareto-dispatchers",
+                "register-dispatcher-bundle",
                 "--evaluated-bundle",
                 evaluated_bundle.path,
+                "--registry-bundle",
+                registry_bundle.path,
                 "--registration-report",
                 registration_report.path,
-                "--registry-db",
-                registry_db,
             ],
         )
 
     return {
+        "prepare": prepare_dataset_bundle,
+        "export": export_expert_bundle,
         "validate": validate_run_contract,
         "build": build_routing_dataset,
         "train": train_dispatcher,
         "evaluate": evaluate_final,
-        "register": register_pareto_dispatchers,
+        "register": register_dispatchers,
     }

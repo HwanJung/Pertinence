@@ -3,7 +3,7 @@
 관련 설계와 운영 범위는 [설계 문서](design.ko.md), [최종 계획](final-plan.ko.md),
 [Cloud 운영 아이디어](operator-selected-cloud.ko.md)에 함께 정리되어 있다.
 
-최종 계획의 다섯 컴포넌트는 `src/pertinence/`에 구현되어 있으며 Python API와
+기존 다섯 처리 컴포넌트와 두 bootstrap 컴포넌트는 `src/pertinence/`에 구현되어 있으며 Python API와
 `pertinence` CLI에서 개별 실행할 수 있다. 클라우드 접속이나 배포 없이 사용할 수 있다.
 기존 CIFAR 재현용 `baseline`, `fixed`, `search`, `final` 명령도 유지된다.
 
@@ -21,13 +21,10 @@
 
 `pipelines/pertinence/requirements-kfp.lock`은 portable runtime과 KFP SDK의 고정 버전 목록이다.
 전체 전이 의존성의 lock은 아니다. KFP를 쓰지 않는 실행 환경은 `.[pipeline]`만 설치해도 된다.
-컨테이너 runtime은 `pipelines/pertinence/requirements-components.lock`과
+컨테이너 runtime은 CPU 전용 `pipelines/pertinence/requirements-components.lock`과
 `pipelines/pertinence/Dockerfile`을 사용하며
 KFP SDK를 이미지에 포함하지 않는다. Dockerfile은 프로젝트 안의 재현 가능한 build 정의만
-제공한다. 현재 단계에서는 이미지를 build하거나 registry로 push하지 않는다.
-기본 runtime은 CPU ONNX Runtime이다. CUDA 환경은 호환되는 `onnxruntime-gpu`와 PyTorch/CUDA
-환경을 별도로 준비하고 validation의 `--device cuda`로 선택한다. CUDA provider가 없으면
-명확하게 실패한다.
+제공한다. Runtime에는 CPU PyTorch wheel과 CPU ONNX Runtime만 들어가며 GPU 실행 옵션은 없다.
 
 테스트는 다운로드 없이 작은 PNG/Parquet 데이터와 실제 ONNX 모델을 생성한다.
 클래스 3/10/100, expert 2/3/5, feature 차원 16/7/9 조합으로 검증부터 등록까지 실행한다.
@@ -76,7 +73,7 @@ expert의 선택 필드 `class_names`를 제공하면 dataset의 순서와 대�
 cost 오름차순이어야 한다. `require_cost_sorted: false`도 순서 변경이나 자동 정렬을 허용하지 않는다.
 비율 기반 split은 아직 지원하지 않으며 `search_size`와 `final_size`를 명시해야 한다.
 
-## 다섯 컴포넌트 실행
+## 기존 다섯 처리 컴포넌트 실행
 
 아래 digest 변수에는 패키징 명령이 출력한 실제 SHA-256을 넣는다.
 `run.yaml`은 최종 계획의 RunConfig 예시를 선택한 모델 ID에 맞게 작성한다.
@@ -123,7 +120,7 @@ cost 오름차순이어야 한다. `require_cost_sorted: false`도 순서 변경
   --registration-report artifacts/cifar10/portable/registration.json
 ```
 
-다섯 컴포넌트의 입출력은 각각 명시적인 파일/디렉터리 경로다. 캐시는 NPY 배열과 JSON manifest,
+처리 컴포넌트의 입출력은 각각 명시적인 파일/디렉터리 경로다. 캐시는 NPY 배열과 JSON manifest,
 checkpoint는 pickle 없이 읽는 NPZ다. 파일 내용의 SHA-256과 manifest fingerprint를 확인한다.
 Split은 정렬한 안정적 sample ID에 seed permutation을 적용하므로 shard의 순서에 의존하지 않는다.
 Source 코드, 주요 runtime 패키지 버전, image digest도 실행 계약에 포함한다. 코드나 의존성 변경
@@ -146,26 +143,25 @@ Registry는 로컬 SQLite 구현이다. Checkpoint 바이트와 전체 실행 �
 
 ## KFP 인터페이스와 로컬 compile
 
-`pipelines/pertinence/components.py`는 다섯 container component를 정의한다.
-`pipeline.py`는 URI/digest 여섯 parameter와 importer를 고정 DAG에 연결한다. 실제 사용할
+`pipelines/pertinence/components.py`는 bootstrap을 포함한 일곱 container component를 정의한다.
+`pipeline.py`는 CIFAR archive, 세 checkpoint, RunConfig의 GCS URI/digest 열 parameter와 importer를
+고정 DAG에 연결한다. 실제 사용할
 container image의 digest를 얻은 뒤 다음과 같이 IR을 로컬에서 생성할 수 있다.
 
 ```bash
 .venv/bin/python -m pipelines.pertinence.pipeline \
   --image "$PERTINENCE_COMPONENT_IMAGE" \
+  --pipeline-root gs://bucket/pertinence/runs \
   --output artifacts/cifar10/portable/pipeline.yaml
 ```
 
 Image는 `registry/name@sha256:<64 hex>` 형식이어야 한다. Compile에는 image pull, cluster 접속,
-submission이 없다. 테스트에서는 가상 digest로 인터페이스와 DAG 구조만 확인한다.
-GPU 설정은 compile 시 `--device cuda`로 지정하며 모든 연산 component에 GPU 1개를 요청한다.
-Search retry는 0, 나머지는 1이고 Registry만 KFP caching을 끈다. KFP의 task retry는 오류 종류를
-구분하지 않으므로 validation의 계약 오류에도 한 번 재시도할 수 있다.
+submission이 없다. 테스트에서는 가상 digest로 인터페이스와 DAG 구조를 확인한다. 모든 단계는
+CPU resource만 요청한다. Search retry는 0, 나머지는 1이고 Registry는 항상 KFP cache를 끈다.
+나머지 task cache도 기본값은 off이며 복구용 IR에만 `--enable-cache`로 켠다.
 
-현재 작업에는 container build/push, object store, credential, PVC, 원격 Registry, cluster 제출을
-포함하지 않는다. 특히 기본 Registry 경로 `/registry/registry.db`는 추후 영속 저장소 연결이
-필요하다. 현 상태의 IR을 배포 준비 완료 상태로 간주하면 안 된다. 실제 CIFAR ONNX export와
-migration 전후 수치 비교도 별도 검증 대상이다.
+실제 GCS/GKE 실행과 Workload Identity 설정은 [GKE CPU 가이드](gke-cpu.ko.md)를 따른다.
+Registry SQLite DB도 `registry_bundle` output artifact로 내보내 pipeline root에 영속화한다.
 
 인터페이스 구현은 공식 [KFP container component 문서](https://www.kubeflow.org/docs/components/pipelines/user-guides/components/container-components/),
 [ONNX Runtime Python API](https://onnxruntime.ai/docs/api/python/api_summary),

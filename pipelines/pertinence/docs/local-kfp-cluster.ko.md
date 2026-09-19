@@ -1,5 +1,9 @@
 # 로컬 Minikube KFP 환경 구성
 
+> 이 문서는 2026-09-11의 이전 5단계 pipeline 설치 기록이다. 현재 7단계 CPU/GCS pipeline은
+> compile 인자와 입력 계약이 달라 이 명령을 그대로 사용할 수 없다. 현재 GKE 배포에는
+> [GKE CPU 가이드](gke-cpu.ko.md)를 사용한다.
+
 이 문서는 `pipelines/pertinence/`의 container component와 pipeline을 로컬 Minikube
 클러스터에서 사용할 수 있도록 구성한 절차를 기록한다. 2026-09-10에 설치했고
 2026-09-11에 상태를 다시 확인했다.

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kfp-launcher
+  namespace: kubeflow
+data:
+  defaultPipelineRoot: gs://REPLACE_WITH_RUN_BUCKET/pertinence/runs
+  providers: |-
+    gs:
+      default:
+        credentials:
+          fromEnv: true
