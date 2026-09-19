@@ -122,13 +122,13 @@ c=(F, \mathcal M, P, W, \theta)
 A_a \ge A_b,\qquad C_a \le C_b
 \]
 
-현재 1차 실험에서는 고정된 4-model routing 구성의 탐색 결과를 합친 후
+현재 1차 실험에서는 고정된 3-model routing 구성의 탐색 결과를 합친 후
 non-dominated dispatcher만 dynamic global Pareto front에 포함한다. 정적
 10-model Pareto 경계는 비교용 별도 계열이며 dispatcher 후보 집합에 합치지
 않는다.
 
 ```python
-solutions = run_pertinence_search(fixed_four_model_configuration)
+solutions = run_pertinence_search(fixed_three_model_configuration)
 evaluated = evaluate_on_untouched_split(solutions)
 
 global_front = nondominated(
@@ -154,12 +154,11 @@ Pareto front의 주축은 원 논문과 동일하게 accuracy와 MFLOPs로 유�
 | 1 | ShuffleNetV2 x0.5 | feature extractor 및 최저비용 anchor |
 | 2 | MobileNetV2 x0.5 | 경량 중간점 |
 | 3 | ResNet56 | 중고성능 중간점 |
-| 4 | RepVGG-A1 | 최고성능 anchor |
 
 accuracy–MFLOPs 그림에는 현재 공개 zoo의 non-dominated 모델 10종을 정적
-Pareto 경계로 계속 표시한다. 그러나 나머지 6종은 routing label, FC 출력,
+Pareto 경계로 계속 표시한다. 그러나 나머지 7종은 routing label, FC 출력,
 penalty matrix, NSGA-II chromosome이나 online expert catalog에는 포함하지
-않는다. 따라서 각 dispatcher bundle은 동일한 4개 expert mapping을 가지며,
+않는다. 따라서 각 dispatcher bundle은 동일한 3개 expert mapping을 가지며,
 운용점은 penalty, weighting과 학습된 FC parameter 차이에서 나온다.
 
 Feature extractor는 모든 dispatcher에서 ShuffleNetV2 x0.5로 고정한다.

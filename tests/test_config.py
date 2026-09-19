@@ -10,6 +10,12 @@ def test_default_config_separates_pareto_boundary_and_routing_pool() -> None:
     config = load_config(ROOT / "experiments" / "cifar10" / "configs" / "experiment.yaml")
     assert config.pareto_boundary_models == PARETO_MODELS
     assert config.candidates == ROUTING_CANDIDATES
+    assert config.candidates == (
+        "shufflenetv2_x0_5",
+        "mobilenetv2_x0_5",
+        "resnet56",
+    )
+    assert "repvgg_a1" not in config.candidates
     assert config.feature_extractor == "shufflenetv2_x0_5"
     assert config.workspace_root == ROOT
     assert config.artifacts_root == ROOT / "artifacts" / "cifar10"

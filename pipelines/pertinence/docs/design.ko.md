@@ -142,20 +142,19 @@ namespace/RBAC 구성을 사용한다. 다만 공식 multi-user 문서가 설명
 ## 3. 현재 파이프라인 분석
 
 현재 저장소는 논문 방법을 공개 CIFAR-10 asset에 맞춘 재현이다. 정적 accuracy-cost
-비교에는 Pareto 경계 10종을 사용하지만 실제 routing, label, FC 출력, NSGA-II에는 다음
-4개 expert만 사용한다.
+비교에는 Pareto 경계 10종을 사용하지만 실제 routing, label, FC 출력, NSGA-II에는
+현재 다음 3개 expert만 사용한다.
 
 1. `shufflenetv2_x0_5`: feature extractor이자 최저비용 fallback
 2. `mobilenetv2_x0_5`
 3. `resnet56`
-4. `repvgg_a1`
 
 현재 실행 순서와 계약은 다음과 같다.
 
 | 현재 단계 | 구현 진입점 | 핵심 입력 | 핵심 출력/검증 |
 |---|---|---|---|
 | asset 준비/검증 | `scripts/prepare_assets.py` | asset manifest | dataset/source/checkpoint 12개 SHA-256 검증 |
-| production preflight | `scripts/preflight.py` | config, asset, dataset, source, CUDA | dependency, disk, split plan, 4 expert `[2,10]` smoke |
+| production preflight | `scripts/preflight.py` | config, asset, dataset, source, CUDA | dependency, disk, split plan, 3 expert `[2,10]` smoke |
 | prediction cache | `scripts/build_cache.py` | 위 asset과 3 split | train/search/final `.pt`, full test expert accuracy gate |
 | baseline/oracle | `pertinence baseline` | train/search cache | expert Top-1, route 분포, cheapest-correct oracle |
 | fixed dispatcher | `pertinence fixed` | train/search cache | 고정 penalty head, loss, search metrics |
@@ -634,7 +633,7 @@ accuracy가 낮더라도 overestimation은 task accuracy를 유지할 수 있으
 지표로 표기한다.
 
 정적 10-model catalog point와 동적 final point는 accuracy 평가 모집단과 비용 정의가 다르다.
-그림에 함께 표시할 수는 있지만, 지배 관계의 확정은 같은 final 2,000장에서 평가한 4개 routing
+그림에 함께 표시할 수는 있지만, 지배 관계의 확정은 같은 final 2,000장에서 평가한 3개 routing
 expert와 dynamic system 사이에서만 한다.
 
 ## 13. 재현성과 lineage
@@ -772,7 +771,7 @@ runtime dependency로 추가하지 않는다.
 - 단계별 합격 조건이 실패하면 downstream task는 실행되지 않는다.
 - Search는 정확히 train/search cache만 입력받는다.
 - Final은 search-retained 모든 state를 재학습 없이 복원한다.
-- 분석 결과가 정적 10-model과 routing 4-model의 역할을 섞지 않는다.
+- 분석 결과가 정적 10-model과 routing 3-model의 역할을 섞지 않는다.
 
 ### 데이터와 재현성
 

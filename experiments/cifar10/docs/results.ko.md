@@ -1,5 +1,8 @@
 # PERTINENCE CIFAR-10 최종 실험 결과
 
+> 이 문서는 RepVGG-A1을 포함했던 과거 4-expert 실행 결과를 보존한다. 현재
+> 실행 설정은 RepVGG-A1을 routing 후보에서 제외한 3-expert 구성이다.
+
 ## 결론
 
 실험은 asset/cache gate, baseline, fixed dispatcher, 50세대 NSGA-II, untouched
@@ -117,7 +120,7 @@ catalog 경계에 대한 기술적 overlay이며 엄밀한 지배 관계의 근�
 
 - Official train에서 cheapest-correct RepVGG-A1 route label이 0건이었다. 그 결과
   search-retained 243개와 final 비지배 해 모두 RepVGG-A1을 한 번도 선택하지
-  않았다. 현재 4-expert 구성은 학습 결과상 사실상 3-expert system이다.
+  않았다. 당시 4-expert 구성은 학습 결과상 사실상 3-expert system이었다.
 - 전체 2,500개 평가의 weighting은 INS 1,678, ISNS 802, ENS 20개였고, search
   Pareto front에는 INS 108, ISNS 135개만 남았다. ENS 해는 보존되지 않았다.
 - Search-retained 해의 final accuracy는 평균 0.316pp 낮아졌다. Search split에

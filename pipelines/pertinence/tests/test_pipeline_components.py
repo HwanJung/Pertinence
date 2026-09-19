@@ -467,10 +467,18 @@ def test_duplicate_yaml_keys_and_nonfinite_configuration():
         RunConfig.from_text("schema_version: 1\nschema_version: 2\n")
 
 
-def test_symlinks_rejected(tmp_path):
+def test_symlinks_rejected(tmp_path, monkeypatch):
     inputs = make_inputs(tmp_path)
     source = Path(inputs["expert_bundle_uri"])
-    (source / "link").symlink_to(tmp_path / "run.yaml")
+    link = source / "link"
+    try:
+        link.symlink_to(tmp_path / "run.yaml")
+    except OSError as error:
+        if getattr(error, "winerror", None) != 1314:
+            raise
+        link.touch()
+        is_symlink = Path.is_symlink
+        monkeypatch.setattr(Path, "is_symlink", lambda path: path == link or is_symlink(path))
     with pytest.raises(ValueError, match="symlink"):
         artifact_sha256(source)
 

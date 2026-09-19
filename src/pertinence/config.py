@@ -26,7 +26,6 @@ ROUTING_CANDIDATES = (
     "shufflenetv2_x0_5",
     "mobilenetv2_x0_5",
     "resnet56",
-    "repvgg_a1",
 )
 
 
@@ -84,7 +83,7 @@ def validate_config(config: ExperimentConfig) -> None:
         )
     if config.candidates != ROUTING_CANDIDATES:
         raise ValueError(
-            "experts.candidates must be the fixed four-model routing configuration"
+            "experts.candidates must be the fixed three-model routing configuration"
         )
     if not set(config.candidates).issubset(config.pareto_boundary_models):
         raise ValueError("routing candidates must belong to the Pareto boundary")

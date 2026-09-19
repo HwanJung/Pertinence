@@ -9,20 +9,26 @@ from pathlib import Path
 import shutil
 import tempfile
 from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 from .contracts.common import digest
 from .reproducibility import canonical_json_hash, sha256_file
 
 
 def local_path(uri: str | Path) -> Path:
-    parsed = urlparse(str(uri))
-    if parsed.scheme and (parsed.scheme != "file" or parsed.netloc not in ("", "localhost")):
-        raise ValueError(
-            "local components accept paths or file:// URIs; stage remote artifacts first"
-        )
-    if parsed.query or parsed.fragment:
-        raise ValueError("input URI must not contain a query or fragment")
-    path = Path(unquote(parsed.path)) if parsed.scheme else Path(uri)
+    raw = str(uri)
+    native_path = Path(raw)
+    if native_path.drive:
+        path = native_path
+    else:
+        parsed = urlparse(raw)
+        if parsed.scheme and (parsed.scheme != "file" or parsed.netloc not in ("", "localhost")):
+            raise ValueError(
+                "local components accept paths or file:// URIs; stage remote artifacts first"
+            )
+        if parsed.query or parsed.fragment:
+            raise ValueError("input URI must not contain a query or fragment")
+        path = Path(url2pathname(unquote(parsed.path))) if parsed.scheme else native_path
     if not path.exists() or path.is_symlink():
         raise ValueError(f"input must exist and must not be a symlink: {path}")
     return path.resolve()

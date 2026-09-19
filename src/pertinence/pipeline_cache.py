@@ -23,6 +23,15 @@ from .reproducibility import canonical_json_hash
 from .runtimes.onnx import ExpertRuntime
 
 
+def _close_memmaps(caches: dict[str, dict[str, np.memmap]]) -> None:
+    for cache in caches.values():
+        for array in cache.values():
+            array.flush()
+            mmap = getattr(array, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
+
+
 def route_labels(predictions: np.ndarray, targets: np.ndarray, fallback: int) -> np.ndarray:
     correct = predictions == targets[:, None]
     return np.where(correct.any(axis=1), correct.argmax(axis=1), fallback).astype(np.int64)
@@ -60,7 +69,8 @@ def build_routing_dataset(
         stages = {
             key: stack.enter_context(atomic_directory(path)) for key, path in destinations.items()
         }
-        arrays = {}
+        arrays: dict[str, dict[str, np.memmap]] = {}
+        stack.callback(_close_memmaps, arrays)
         positions = {}
         for split_name, stage in stages.items():
             samples = len(ids[split_name])

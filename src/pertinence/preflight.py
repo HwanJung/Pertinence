@@ -13,6 +13,7 @@ import tomllib
 from typing import Any
 
 import torch
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
 from .assets import load_asset_manifest, prepare_assets, verify_extracted_source
@@ -53,17 +54,26 @@ def _check_python_and_dependencies(workspace_root: Path) -> None:
     with (workspace_root / "pyproject.toml").open("rb") as handle:
         dependencies = tomllib.load(handle)["project"]["dependencies"]
     mismatches: list[str] = []
-    for requirement in dependencies:
-        name, expected = requirement.split("==", maxsplit=1)
+    for raw_requirement in dependencies:
+        try:
+            requirement = Requirement(raw_requirement)
+        except InvalidRequirement as error:
+            raise PreflightError(
+                f"invalid project dependency requirement: {raw_requirement!r}"
+            ) from error
+        if requirement.marker is not None and not requirement.marker.evaluate():
+            continue
+        name = requirement.name
+        expected = str(requirement.specifier) or "any installed version"
         try:
             actual = metadata.version(name)
         except metadata.PackageNotFoundError:
             mismatches.append(f"{name}: missing (expected {expected})")
             continue
         try:
-            versions_match = Version(actual) == Version(expected)
+            versions_match = not requirement.specifier or Version(actual) in requirement.specifier
         except InvalidVersion:
-            versions_match = actual == expected
+            versions_match = actual in requirement.specifier
         if not versions_match:
             mismatches.append(f"{name}: {actual} (expected {expected})")
     if mismatches:

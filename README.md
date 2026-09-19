@@ -4,7 +4,7 @@ This repository implements the method in **PERTINENCE: Input-based
 Opportunistic Neural Network Dynamic Execution** (arXiv:2507.01695v3) for
 CIFAR-10. It retains the ten non-dominated checkpoints from the current
 `chenyaofo/pytorch-cifar-models` CIFAR-10 catalog as the static accuracy-cost
-boundary, while the dynamic dispatcher routes among four representative
+boundary, while the current dynamic dispatcher routes among three representative
 experts.
 
 The completed CIFAR-10 experiment and the new CIFAR-100 work are isolated under
@@ -34,8 +34,7 @@ Dataset-specific files must not be added back to root-level `configs/`,
   its own experiment directory.
 - Static Pareto boundary: the ten cost-sorted models in
   `experiments/cifar10/data/model_catalog.csv` with `pareto=True`.
-- Routing experts: `shufflenetv2_x0_5`, `mobilenetv2_x0_5`, `resnet56`, and
-  `repvgg_a1`.
+- Routing experts: `shufflenetv2_x0_5`, `mobilenetv2_x0_5`, and `resnet56`.
 - Dispatcher: frozen `shufflenetv2_x0_5` features followed by one trainable
   linear layer.
 - Labels: cheapest expert that classifies each sample correctly; expert 0 is
@@ -64,6 +63,23 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
+The root lock captures the Linux CUDA environment used for the completed
+CIFAR-10 experiment. On Windows, install the project extras directly so the
+platform marker selects the current Blackwell-compatible PyTorch build:
+
+```powershell
+uv venv .venv --python 3.11
+uv pip install --python .venv\Scripts\python.exe --editable ".[dev,pipeline,kfp]"
+uv pip install --python .venv\Scripts\python.exe --reinstall --no-deps `
+  torch==2.14.0 torchvision==0.29.0 `
+  --index-url https://download.pytorch.org/whl/cu130
+```
+
+Windows uses PyTorch 2.14 / torchvision 0.29, while non-Windows environments
+retain the original PyTorch 2.5.1 / torchvision 0.20.1 reproduction pins. The
+explicit CUDA-index step is required because the default Windows PyPI wheel is
+CPU-only; the CUDA 13.0 wheel supports the Blackwell `sm_120` target.
+
 Downloaded files and run outputs live under `artifacts/<dataset>/` and are
 intentionally git-ignored. Network access occurs only in the explicit asset
 preparation command; model loading never calls PyTorch Hub or a URL.
@@ -79,7 +95,7 @@ is required for these local components.
 
 Run the read-only preflight before GPU inference. It verifies pinned package
 versions, every asset hash, extracted source bytes, CIFAR-10 sizes, free disk,
-the configured device, all four checkpoint loads, tiny real-model forwards,
+the configured device, all three routing checkpoint loads, tiny real-model forwards,
 and the planned cache fingerprints. Do not use a CPU override for a production
 run: it is only useful for local asset smoke testing.
 
@@ -101,7 +117,7 @@ python scripts/preflight.py \
   --source-dir artifacts/cifar10/sources/pytorch-cifar-models-786c16252c0fc58ee9adac063f8337cc4a7a497a \
   --cache-dir artifacts/cifar10/cache/pareto
 
-# 3. GPU inference: validate the four routing experts and build immutable caches.
+# 3. GPU inference: validate the three routing experts and build immutable caches.
 python scripts/build_cache.py \
   --config experiments/cifar10/configs/experiment.yaml \
   --manifest experiments/cifar10/configs/assets.yaml \

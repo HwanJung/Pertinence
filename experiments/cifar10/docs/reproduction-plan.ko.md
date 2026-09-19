@@ -5,13 +5,13 @@
 이 구현은 PERTINENCE arXiv 2507.01695v3의 알고리즘을 그대로 따르되,
 현재 `chenyaofo/pytorch-cifar-models` 공개 CIFAR-10 체크포인트에서 얻은
 accuracy–MAdds Pareto 경계 10종은 정적 비교 기준으로 유지하고, 실제
-PERTINENCE dispatcher의 routing 후보는 그중 대표 4종만 사용한다.
+PERTINENCE dispatcher의 현재 routing 후보는 그중 대표 3종만 사용한다.
 
 두 모델 집합의 역할은 섞지 않는다.
 
 - Pareto 경계 10종: 정적 단일 모델의 accuracy–MFLOPs 기준선, 표와 그림,
   최종 결과 비교에 사용한다.
-- Routing 후보 4종: expert prediction cache, cheapest-correct label, FC 출력,
+- Routing 후보 3종: expert prediction cache, cheapest-correct label, FC 출력,
   penalty matrix, NSGA-II와 실제 동적 실행에만 사용한다.
 
 이는 논문 Figure 6(c)의 숫자를 그대로 다시 얻는 실험은 아니다. 논문은
@@ -22,7 +22,7 @@ VGG11-BN/VGG16-BN을 사용했다. 따라서 아래 두 층을 분리한다.
   literal penalty loss, 세 weighting, NSGA-II, system-level accuracy/cost,
   feature 공유.
 - 공개 자산 적응 요소: 현재 Pareto 경계 10종, 그중 선택한 routing 후보
-  4종, ShuffleNetV2 x0.5 extractor, 공개 checkpoint의 전처리와 catalog
+  3종, ShuffleNetV2 x0.5 extractor, 공개 checkpoint의 전처리와 catalog
   MAdds.
 
 ## 단계별 계획
@@ -34,7 +34,7 @@ VGG11-BN/VGG16-BN을 사용했다. 따라서 아래 두 층을 분리한다.
   `786c16252c0fc58ee9adac063f8337cc4a7a497a`에 고정한다.
 - CIFAR-10 원본 tar, source archive와 Pareto 경계 10종의 checkpoint 출처를
   manifest에 고정한다. 실제 cache inference와 dispatcher 실행에서는 아래
-  4개 checkpoint만 로드한다.
+  3개 checkpoint만 로드한다.
 - 모든 파일은 전체 SHA-256으로 검증하고 결과 manifest를 남긴다.
 - 모델 로더는 local source와 local checkpoint만 허용한다. import, dry-run,
   model load 과정에서 암묵적 네트워크 접근은 없다.
@@ -79,17 +79,16 @@ official test  10,000 -> ga_search 8,000 + final_evaluation 2,000
 9. RepVGG-A1
 10. RepVGG-A2
 
-실제 routing 후보는 다음 4종으로 고정한다.
+실제 routing 후보는 다음 3종으로 고정한다.
 
 | 순서 | 모델 | Top-1 | MFLOPs | 역할 |
 |---:|---|---:|---:|---|
 | 1 | ShuffleNetV2 x0.5 | 90.13% | 21.80 | extractor, 최저비용 anchor |
 | 2 | MobileNetV2 x0.5 | 92.88% | 55.94 | 경량 중간점 |
 | 3 | ResNet56 | 94.37% | 251.50 | 중고성능 중간점 |
-| 4 | RepVGG-A1 | 94.89% | 1,702.66 | 최고성능 anchor |
 
 Pareto 경계 10종의 정적 수치는 고정 catalog/CSV에서 읽는다. Routing 후보
-4종만 frozen/eval/no-grad로 처리해 다음을 split별로 저장한다.
+3종만 frozen/eval/no-grad로 처리해 다음을 split별로 저장한다.
 
 - stable sample index와 원래 CIFAR class
 - 모델 순서와 sample별 predicted class
@@ -98,22 +97,19 @@ Pareto 경계 10종의 정적 수치는 고정 catalog/CSV에서 읽는다. Rout
 - extractor final Linear 직전 feature
 - checkpoint/source/config/split fingerprint
 
-Cache를 새로 기록하기 전에 공식 test 10,000장 전체에서 4개 routing 후보의
+Cache를 새로 기록하기 전에 공식 test 10,000장 전체에서 3개 routing 후보의
 Top-1을 upstream 보고값과 자동 비교한다. Catalog는 학습 로그의 best-validation
 값이고 고정 checkpoint 재평가는 runtime에 따라 소폭 달라질 수 있으므로, 허용
 delta는 config에 `-0.25pp <= measured - catalog <= +0.75pp`로 고정한다. 하나라도
 벗어나면 새 cache를 기록하지 않고 실패한다. 이는 고정 expert 입력 무결성
 gate이며 dispatcher 해 선택에는 사용하지 않는다.
-RepVGG는 checkpoint 원형의 multi-branch 모델을 쓰며 deploy fusion은 별도
-실험으로 분리한다.
-
-나머지 6종은 routing label, FC class, penalty gene 및 평균 동적 비용에
+나머지 7종은 routing label, FC class, penalty gene 및 평균 동적 비용에
 포함하지 않는다. 최종 accuracy–MFLOPs 그림에는 10개 정적 모델 경계와
-4-model PERTINENCE 해의 Pareto front를 별도 계열로 겹쳐 그린다.
+3-model PERTINENCE 해의 Pareto front를 별도 계열로 겹쳐 그린다.
 
 ### 4. Ideal dispatcher 검증
 
-각 sample에서 4개 routing 후보 중 정답인 전문가의 비용 index가 가장 작은
+각 sample에서 3개 routing 후보 중 정답인 전문가의 비용 index가 가장 작은
 것을 route label로
 한다. 어떤 전문가도 정답이 아니면 index 0으로 보낸다. Oracle의 task
 accuracy, 평균 비용, route 비율, no-correct 비율을 먼저 산출해 캐시와 모델
@@ -183,7 +179,7 @@ final cache를 열지 않으며 final 명령에서 처음 접근한다.
 - ideal-vs-predicted route confusion matrix
 - 전문가별 선택 비율
 - no-correct 비율
-- 4개 routing 후보의 동일 split 단일 전문가 baseline과 oracle
+- 3개 routing 후보의 동일 split 단일 전문가 baseline과 oracle
 - catalog 기준 정적 10-model Pareto 경계와의 accuracy–MFLOPs 비교
 
 PERTINENCE 비용은 `extractor + FC + selected expert`다. 선택 expert가 extractor와
@@ -217,7 +213,7 @@ CPU preflight는 실제 local source/checkpoint를 로드해 각 routing expert�
 smoke forward를 수행할 수 있다. 이는 shape와 연결 상태만 확인하며 accuracy
 결과를 생성하지 않는다. 다음 계산부터 실제 실험 단계다.
 
-- 60,000장에 대한 4개 routing 전문가 GPU 추론
+- 60,000장에 대한 3개 routing 전문가 GPU 추론
 - feature/prediction cache 생성
 - FC 학습
 - 50 x 50 x 20 epoch NSGA-II
