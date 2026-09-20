@@ -18,6 +18,7 @@ under `src/pertinence/`; generated assets, caches, and runs use the matching
 experiments/
 ├── cifar10/             # config, catalog, experiment docs, figures, analysis scripts
 └── cifar100/            # CIFAR-100 catalog and all new experiment-specific work
+cloud/                   # GKE, KFP training, and KServe benchmark environment
 src/pertinence/          # shared routing, training, optimization, cache, and metrics code
 scripts/                 # shared command-line entry points
 artifacts/
@@ -27,6 +28,12 @@ artifacts/
 
 Dataset-specific files must not be added back to root-level `configs/`,
 `data/`, `docs/`, or `figures/` directories.
+
+The shared GKE environment, internal cloud resources, node-pool isolation, and the
+KFP-to-KServe experiment lifecycle are defined in the
+[cloud environment guide](cloud/README.md). Reproducible cluster provisioning, existing-cluster
+adoption, optional node-pool profiles, and remote state operations are documented in the
+[Terraform GKE IaC guide](cloud/iac/README.md).
 
 ## Scope
 

@@ -1,9 +1,10 @@
 # GKE CPU + GCS KFP 실행 가이드
 
-이 구성은 GKE 위의 OSS Kubeflow Pipelines 2.17을 대상으로 한다. Raw input과 run output은
-GCS에 두고, task Pod는 GPU 없이 CPU만 사용한다. KFP API server의 IR 저장소와 run artifact의
-pipeline root는 서로 다른 설정이다. API server는 배포판 기본 저장소를 유지하고 KFP launcher의
-pipeline root만 GCS로 설정한다.
+이 구성은 GKE 위의 KFP v2 호환 OSS Kubeflow Pipelines backend를 대상으로 한다. Compile과
+제출에는 `kfp==2.17.0` SDK를 사용한다. Raw input과 run output은 GCS에 두고, task Pod는 GPU
+없이 CPU만 사용한다. KFP API server의 IR 저장소와 run artifact의 pipeline root는 서로 다른
+설정이다. API server는 배포판 기본 저장소를 유지하고 KFP launcher의 pipeline root만 GCS로
+설정한다.
 
 ## 1. 실행 흐름
 
@@ -40,12 +41,14 @@ PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(proje
 RAW_BUCKET="your-pertinence-raw"
 RUN_BUCKET="your-pertinence-runs"
 NAMESPACE="kubeflow"
-KSA="pertinence-pipeline"
+KSA="pipeline-runner"
 
 gcloud storage buckets create "gs://${RAW_BUCKET}" --location=asia-northeast3
 gcloud storage buckets create "gs://${RUN_BUCKET}" --location=asia-northeast3
 
-kubectl apply -f pipelines/pertinence/gke/service-account.yaml
+# KFP 설치가 실행 RBAC와 함께 만든 KSA와 RoleBinding을 확인한다.
+kubectl get serviceaccount "${KSA}" -n "${NAMESPACE}"
+kubectl get rolebinding pipeline-runner-binding -n "${NAMESPACE}"
 
 KSA_PRINCIPAL="principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/${NAMESPACE}/sa/${KSA}"
 gcloud storage buckets add-iam-policy-binding "gs://${RAW_BUCKET}" \
@@ -58,6 +61,10 @@ gcloud storage buckets add-iam-policy-binding "gs://${RUN_BUCKET}" \
 
 서비스 계정 key JSON을 Pod에 넣지 않는다. GKE metadata server를 통한 Workload Identity를
 사용한다. Standard cluster라면 해당 node pool에도 GKE metadata server가 활성화되어 있어야 한다.
+새 KSA 대신 KFP가 실행 RBAC와 함께 제공하는 `pipeline-runner`를 사용하고, 이 KSA에 bucket
+권한만 추가한다. 계정이나 RoleBinding이 없다면 빈 KSA만 만들지 말고 사용 중인 KFP release의
+runner RBAC를 복구한다. `gke/service-account.yaml`은 기대하는 이름/namespace를 확인하기 위한
+참조 manifest다.
 
 `pipelines/pertinence/gke/kfp-launcher-configmap.yaml`의 bucket placeholder를 바꾼 뒤 적용한다.
 이미 같은 namespace에 `kfp-launcher` ConfigMap이 있으면 값을 먼저 백업한다.
@@ -127,7 +134,8 @@ GKE node service account에는 해당 repository의 `roles/artifactregistry.read
 
 ## 5. Compile과 제출
 
-Compiler와 backend는 모두 KFP 2.17 계열을 사용한다.
+Compiler와 제출 client는 `kfp==2.17.0`을 사용한다. Backend는 해당 IR을 지원하는 KFP v2
+배포판이어야 하며, SDK와 backend의 release 번호가 같아야 한다는 뜻은 아니다.
 
 ```bash
 .venv/bin/python -m pip install -r pipelines/pertinence/requirements-kfp.lock
