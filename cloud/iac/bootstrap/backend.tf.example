@@ -1,0 +1,7 @@
+# Copy this file to backend.tf only after the state bucket has been created.
+terraform {
+  backend "gcs" {
+    bucket = "pertinence-509116-pertinence-iac-state"
+    prefix = "bootstrap"
+  }
+}

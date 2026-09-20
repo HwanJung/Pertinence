@@ -1,0 +1,37 @@
+# Requires the real project quota to be raised to at least 48 vCPU before apply.
+vcpu_quota_budget = 48
+
+node_pools = {
+  system-pool = {
+    enabled            = true
+    machine_type       = "e2-standard-4"
+    min_count          = 1
+    max_count          = 1
+    initial_node_count = 1
+    vcpu_per_node      = 4
+  }
+  pipeline-pool = {
+    enabled            = true
+    machine_type       = "n2-standard-8"
+    min_count          = 0
+    max_count          = 2
+    initial_node_count = 0
+    vcpu_per_node      = 8
+  }
+  serving-pool = {
+    enabled            = true
+    machine_type       = "n2-standard-8"
+    min_count          = 0
+    max_count          = 3
+    initial_node_count = 0
+    vcpu_per_node      = 8
+  }
+  loadgen-pool = {
+    enabled            = true
+    machine_type       = "n2-standard-4"
+    min_count          = 0
+    max_count          = 1
+    initial_node_count = 0
+    vcpu_per_node      = 4
+  }
+}

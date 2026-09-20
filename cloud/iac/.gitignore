@@ -1,0 +1,11 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+*.auto.tfvars
+crash.log
+crash.*.log
+
+# Created locally only after the bootstrap bucket exists.
+bootstrap/backend.tf

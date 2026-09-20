@@ -7,6 +7,20 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Terraform working directories, local state, saved plans, and crash logs.
+# Provider selections remain reproducible through committed .terraform.lock.hcl files.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
 # Downloaded datasets, upstream source, checkpoints, and experiment outputs.
 # Runtime data is partitioned as artifacts/cifar10/ and artifacts/cifar100/.
 artifacts/

@@ -1,0 +1,38 @@
+# No KFP/KServe controllers may be installed without system-pool.
+allow_without_system_pool = true
+vcpu_quota_budget         = 8
+
+node_pools = {
+  system-pool = {
+    enabled            = false
+    machine_type       = "e2-standard-4"
+    min_count          = 1
+    max_count          = 1
+    initial_node_count = 1
+    vcpu_per_node      = 4
+  }
+  pipeline-pool = {
+    enabled            = true
+    machine_type       = "n2-standard-8"
+    min_count          = 0
+    max_count          = 1
+    initial_node_count = 0
+    vcpu_per_node      = 8
+  }
+  serving-pool = {
+    enabled            = false
+    machine_type       = "n2-standard-8"
+    min_count          = 0
+    max_count          = 3
+    initial_node_count = 0
+    vcpu_per_node      = 8
+  }
+  loadgen-pool = {
+    enabled            = false
+    machine_type       = "n2-standard-4"
+    min_count          = 0
+    max_count          = 1
+    initial_node_count = 0
+    vcpu_per_node      = 4
+  }
+}

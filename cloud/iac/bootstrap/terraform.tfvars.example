@@ -1,0 +1,8 @@
+project_id        = "pertinence-509116"
+state_bucket_name = "pertinence-509116-pertinence-iac-state"
+location          = "asia-northeast3"
+
+labels = {
+  environment = "shared"
+  repository  = "pertinence"
+}
