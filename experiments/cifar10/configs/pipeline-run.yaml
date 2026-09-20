@@ -1,5 +1,5 @@
 schema_version: 1
-run_name: cifar10-vertex-cpu
+run_name: cifar10-gke-cpu
 seed: 20260824
 
 routing:

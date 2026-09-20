@@ -114,7 +114,9 @@ def train_dispatcher(
         penalty_max=ga.penalty_max,
         keep_dispatcher_states=True,
     )
-    run = run_nsga2(problem, config=ga, seed=raw["seed"])
+    # Pymoo emits one flushed progress row per generation. Kubernetes log
+    # timestamps make the first 50 evaluations sufficient for a runtime ETA.
+    run = run_nsga2(problem, config=ga, seed=raw["seed"], verbose=True)
     if len(run.evaluations) != contract["dimensions"]["evaluation_count"]:
         raise RuntimeError("NSGA-II evaluation count differs from normalized contract")
     pareto_ids = [record.evaluation_id for record in run.pareto_evaluations]

@@ -1,9 +1,10 @@
 """Compile the CPU-only GCS-backed KFP DAG; cloud provisioning remains separate."""
 
 import argparse
+from pathlib import Path
 from urllib.parse import urlparse
 
-from kfp import compiler, dsl
+from kfp import compiler, dsl, kubernetes
 
 from .components import make_components
 
@@ -27,7 +28,25 @@ def _resources(task, *, cpu: str, memory: str):
         .set_cpu_limit(cpu)
         .set_memory_request(memory)
         .set_memory_limit(memory)
+        .set_env_variable("OMP_NUM_THREADS", cpu)
+        .set_env_variable("MKL_NUM_THREADS", cpu)
     )
+
+
+def _schedule_on_pipeline_pool(task):
+    kubernetes.add_node_selector(
+        task,
+        label_key="cloud.google.com/gke-nodepool",
+        label_value="pipeline-pool",
+    )
+    kubernetes.add_toleration(
+        task,
+        key="workload",
+        operator="Equal",
+        value="pertinence-pipeline",
+        effect="NoSchedule",
+    )
+    return task
 
 
 def make_pipeline(
@@ -35,6 +54,7 @@ def make_pipeline(
     *,
     pipeline_root: str,
     cpu_threads: int = 4,
+    train_timeout_seconds: int = 259_200,
     enable_cache: bool = False,
 ):
     pipeline_root = _gcs_uri(pipeline_root)
@@ -119,11 +139,23 @@ def make_pipeline(
             evaluated_bundle=evaluate.outputs["evaluated_bundle"]
         )
 
+        for task in (
+            prepare,
+            export,
+            validate,
+            build,
+            train,
+            evaluate,
+            register,
+        ):
+            _schedule_on_pipeline_pool(task)
+
         _resources(prepare, cpu="2", memory="4Gi")
         _resources(export, cpu=str(cpu_threads), memory="8Gi")
         _resources(validate, cpu=str(cpu_threads), memory="6Gi")
         _resources(build, cpu=str(cpu_threads), memory="12Gi")
         _resources(train, cpu=str(cpu_threads), memory="8Gi")
+        kubernetes.set_timeout(train, seconds=train_timeout_seconds)
         _resources(evaluate, cpu="2", memory="4Gi")
         _resources(register, cpu="1", memory="2Gi")
         for task in (prepare, export, validate, build, train, evaluate):
@@ -136,25 +168,48 @@ def make_pipeline(
     return pipeline
 
 
+def compile_pipeline(
+    *,
+    image: str,
+    pipeline_root: str,
+    output: str | Path,
+    cpu_threads: int = 4,
+    train_timeout_seconds: int = 259_200,
+    enable_cache: bool = False,
+) -> None:
+    """Compile the versioned pipeline package used for GKE submission."""
+    output = Path(output)
+    compiler.Compiler().compile(
+        make_pipeline(
+            image,
+            pipeline_root=pipeline_root,
+            cpu_threads=cpu_threads,
+            train_timeout_seconds=train_timeout_seconds,
+            enable_cache=enable_cache,
+        ),
+        str(output),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
     parser.add_argument("--pipeline-root", required=True, type=_gcs_uri)
     parser.add_argument("--output", required=True)
     parser.add_argument("--cpu-threads", type=int, default=4)
+    parser.add_argument("--train-timeout-seconds", type=int, default=259_200)
     cache = parser.add_mutually_exclusive_group()
     cache.add_argument("--enable-cache", action="store_true", dest="enable_cache")
     cache.add_argument("--disable-cache", action="store_false", dest="enable_cache")
     parser.set_defaults(enable_cache=False)
     args = parser.parse_args()
-    compiler.Compiler().compile(
-        make_pipeline(
-            args.image,
-            pipeline_root=args.pipeline_root,
-            cpu_threads=args.cpu_threads,
-            enable_cache=args.enable_cache,
-        ),
-        args.output,
+    compile_pipeline(
+        image=args.image,
+        pipeline_root=args.pipeline_root,
+        output=args.output,
+        cpu_threads=args.cpu_threads,
+        train_timeout_seconds=args.train_timeout_seconds,
+        enable_cache=args.enable_cache,
     )
 
 

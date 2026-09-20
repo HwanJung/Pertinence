@@ -2,6 +2,8 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
+      - --platform
+      - linux/amd64
       - --file
       - pipelines/pertinence/Dockerfile
       - --tag
@@ -9,3 +11,6 @@ steps:
       - .
 images:
   - ${_IMAGE}
+logsBucket: gs://${_LOG_BUCKET}/cloud-build/${_EXPERIMENT_ID}/logs
+options:
+  logging: GCS_ONLY

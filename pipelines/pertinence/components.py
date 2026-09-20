@@ -72,7 +72,7 @@ def make_components(image: str, *, cpu_threads: int = 4):
         )
 
     @dsl.container_component
-    def validate_run_contract(
+    def validate_run(
         dataset_bundle: Input[Artifact],
         expert_bundle: Input[Artifact],
         run_config: Input[Artifact],
@@ -87,7 +87,7 @@ def make_components(image: str, *, cpu_threads: int = 4):
             image=image,
             command=command,
             args=[
-                "validate-run-contract",
+                "validate-run",
                 "--dataset-bundle-uri",
                 dataset_bundle.path,
                 "--dataset-bundle-sha256",
@@ -225,7 +225,7 @@ def make_components(image: str, *, cpu_threads: int = 4):
     return {
         "prepare": prepare_dataset_bundle,
         "export": export_expert_bundle,
-        "validate": validate_run_contract,
+        "validate": validate_run,
         "build": build_routing_dataset,
         "train": train_dispatcher,
         "evaluate": evaluate_final,
