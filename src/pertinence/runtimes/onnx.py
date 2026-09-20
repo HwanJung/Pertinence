@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 from ..pipeline_artifacts import safe_path, verify_artifact
+
+
+def _iter_message_children(message: object) -> Iterator[object]:
+    """Yield nested protobuf messages without relying on deprecated descriptor fields."""
+    for field, value in message.ListFields():
+        if field.message_type is None:
+            continue
+        is_repeated = getattr(field, "is_repeated", None)
+        if is_repeated is None:
+            is_repeated = field.label == field.LABEL_REPEATED
+        if is_repeated:
+            yield from value
+        else:
+            yield value
 
 
 class ExpertRuntime:
@@ -35,13 +50,8 @@ class ExpertRuntime:
                 raise ValueError("ONNX external tensor data is unsupported; export a single file")
             if isinstance(message, onnx.NodeProto) and message.domain not in ("", "ai.onnx"):
                 raise ValueError("ONNX custom operator domains are unsupported")
-            for field, value in message.ListFields():
-                if field.message_type is not None:
-                    if field.label == field.LABEL_REPEATED:
-                        for child in value:
-                            check_message(child)
-                    else:
-                        check_message(value)
+            for child in _iter_message_children(message):
+                check_message(child)
 
         check_message(model)
         if model.functions:

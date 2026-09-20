@@ -11,6 +11,7 @@ import io
 import json
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -41,8 +42,32 @@ from pertinence.pipeline_registry import (
     register_dispatcher_bundle,
     register_pareto_dispatchers,
 )
+from pertinence.runtimes.onnx import _iter_message_children
 from pertinence.pipeline_search import evaluate_final, train_dispatcher
 from pertinence.pipeline_validation import validate_run_contract
+
+
+@pytest.mark.parametrize(
+    "field_factory",
+    [
+        lambda repeated: SimpleNamespace(message_type=object(), is_repeated=repeated),
+        lambda repeated: SimpleNamespace(
+            message_type=object(), label=3 if repeated else 1, LABEL_REPEATED=3
+        ),
+    ],
+    ids=["modern-is-repeated", "legacy-label"],
+)
+def test_protobuf_message_walk_supports_descriptor_apis(field_factory):
+    repeated_children = [object(), object()]
+    singular_child = object()
+    fields = [
+        (field_factory(True), repeated_children),
+        (field_factory(False), singular_child),
+        (SimpleNamespace(message_type=None, is_repeated=False), "scalar"),
+    ]
+    message = SimpleNamespace(ListFields=lambda: fields)
+
+    assert list(_iter_message_children(message)) == [*repeated_children, singular_child]
 
 
 def make_inputs(root: Path, classes: int = 3, experts: int = 2, feature_dim: int = 16) -> dict:
