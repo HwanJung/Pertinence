@@ -1,4 +1,5 @@
-# Requires the real project quota to be raised to at least 48 vCPU before apply.
+# UNIMPLEMENTED ROADMAP EXAMPLE. Never apply to dispatcher-current state.
+# A future environment also requires at least 48 vCPU quota before apply.
 vcpu_quota_budget = 48
 
 node_pools = {

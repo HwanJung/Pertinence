@@ -1,7 +1,8 @@
-# PERTINENCE CIFAR-10 최종 실험 결과
+# PERTINENCE CIFAR-10 과거 로컬 4-expert 결과
 
-> 이 문서는 RepVGG-A1을 포함했던 과거 4-expert 실행 결과를 보존한다. 현재
-> 실행 설정은 RepVGG-A1을 routing 후보에서 제외한 3-expert 구성이다.
+> 이 문서는 RepVGG-A1을 포함했던 완료된 로컬 4-expert 실행 결과를 보존한다. 현재
+> `experiment.yaml`과 GKE production 실행은 RepVGG-A1을 routing 후보에서 제외한
+> 3-expert 구성이며, 아래 수치와 산출물을 현재 설정의 결과로 사용하면 안 된다.
 
 ## 결론
 
@@ -14,7 +15,7 @@ search Pareto front로 보존됐고, 이를 모두 final split에 한 번씩 적
 관측한 최고 dynamic 정확도는 94.65% / 228.70 MFLOPs로, ResNet56보다 0.05pp
 높고 비용은 9.1% 낮다. 다만 RepVGG-A1 단일 expert의 95.35%에는 도달하지 못했다.
 
-![PERTINENCE final accuracy–compute results](../figures/final_accuracy_mflops.svg)
+![PERTINENCE local four-expert accuracy–compute results](../figures/local-4expert-final-accuracy-mflops.svg)
 
 ## 실행 및 artifact 검증
 
@@ -137,11 +138,11 @@ catalog 경계에 대한 기술적 overlay이며 엄밀한 지배 관계의 근�
 ## 산출물과 재생성
 
 - 전체 solution 표:
-  [`data/final_solutions.csv`](../data/final_solutions.csv)
+  [`data/local-4expert-final-solutions.csv`](../data/local-4expert-final-solutions.csv)
 - 비교 그림 SVG:
-  [`figures/final_accuracy_mflops.svg`](../figures/final_accuracy_mflops.svg)
+  [`figures/local-4expert-final-accuracy-mflops.svg`](../figures/local-4expert-final-accuracy-mflops.svg)
 - 비교 그림 PNG:
-  [`figures/final_accuracy_mflops.png`](../figures/final_accuracy_mflops.png)
+  [`figures/local-4expert-final-accuracy-mflops.png`](../figures/local-4expert-final-accuracy-mflops.png)
 - 분석 요약:
   `artifacts/cifar10/runs/pareto/analysis-summary.json`
 - 분석 코드:
@@ -154,6 +155,6 @@ catalog 경계에 대한 기술적 overlay이며 엄밀한 지배 관계의 근�
   --final-result artifacts/cifar10/runs/pareto/final.json \
   --static-csv experiments/cifar10/data/model_catalog.csv \
   --summary-output artifacts/cifar10/runs/pareto/analysis-summary.json \
-  --solutions-csv experiments/cifar10/data/final_solutions.csv \
-  --figure-stem experiments/cifar10/figures/final_accuracy_mflops
+  --solutions-csv experiments/cifar10/data/local-4expert-final-solutions.csv \
+  --figure-stem experiments/cifar10/figures/local-4expert-final-accuracy-mflops
 ```

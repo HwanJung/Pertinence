@@ -1,4 +1,4 @@
-# Dispatcher GKE/KFP 실행 보고서
+# 2026-09-20 Dispatcher GKE/KFP 실행·IaC 도입 기록
 
 ## 1. 결론
 
@@ -148,6 +148,9 @@ gs://pertinence-509116-pertinence-runs/pertinence/runs/dispatcher-gke-20260919t1
   deployments, services/ingress, GKE cluster/node-pool, network inventory, train log
 ```
 
+`dispatcher-training-run-plan.ko.md`는 제출 당시 GCS에 고정한 historical artifact 이름이다.
+현재 저장소의 운영 정본은 [runbook](../runbook.ko.md)이며 이 object를 최신 절차로 해석하지 않는다.
+
 Raw/run/build bucket은 Uniform bucket-level access, public access prevention과 versioning을 유지한다.
 최종 image와 두 build의 source/log evidence도 Artifact Registry와 build bucket에 보존했다. 임시
 Cloud Build SA의 build bucket `Storage Admin`과 Artifact Registry writer 권한은 모두 회수했다.
@@ -177,3 +180,40 @@ external IP가 있다. 외부 서비스 endpoint로 사용되지는 않으며 �
 
 향후 종료 요청 시에는 결과/metadata 재확인 후 KFP PVC 삭제와 PV/disk 소멸 확인 → 두 KSA IAM
 binding 제거 → cluster 삭제 → VM/disk/LB/IP 잔여 확인 → kubeconfig context 정리 순서로 수행한다.
+
+## 8. Terraform 관리 도입
+
+Production 실행 뒤 기존 cluster를 재생성하거나 중단하지 않고 Terraform remote state에 가져왔다.
+
+- `pertinence-509116-pertinence-iac-state` bucket을 `asia-northeast3`에 만들고 bootstrap state를
+  `bootstrap/default.tfstate`로 이전했다.
+- Cluster, system/pipeline pool, API 6개, node service account와 IAM binding 2개 등 12개 resource를
+  `gke/dispatcher-current/default.tfstate`에 import했다.
+- Import plan은 `12 imported, 0 added, 0 changed, 0 destroyed`였다.
+- Cluster의 deletion protection을 유지하고 두 node pool의 Terraform deletion policy를
+  `PREVENT`로 바꿨다. 이 적용은 `0 added, 2 changed, 0 destroyed`였고 node 재생성은 없었다.
+- 마지막 `training-current.tfvars` plan과 sizing-only 확인 plan은 모두 `No changes`였다.
+
+Base state는 KFP/KServe, Kubernetes resource/PVC, experiment bucket과 pipeline IAM을 소유하지
+않는다. Imported pool의 taint 표현 차이는 plan drift에서 제외하지만 provider가 읽은 effective
+taint에 필수 workload taint가 없으면 postcondition이 실패한다.
+
+도입 시 다음 검증을 통과했다.
+
+| 검증 | 결과 |
+|---|---|
+| Python/pipeline tests | 135 passed |
+| Terraform plan-guard tests | 17 passed |
+| GKE module tests | 11 passed |
+| Terraform validate/fmt | passed |
+| Ruff / diff check | passed |
+
+예제 profile은 이 실행에 적용하지 않았다. 현행 state에는 `training-current.tfvars`만 사용하며,
+신규 cluster는 별도 environment root와 backend prefix에서 `fresh-create` guard를 통과해야 한다.
+
+## 관련 정본
+
+- [현재 cloud 상태와 문서 색인](../../README.md)
+- [실제 아키텍처](../architecture.ko.md)
+- [반복 운영 runbook](../runbook.ko.md)
+- [Terraform guide](../../iac/README.md)

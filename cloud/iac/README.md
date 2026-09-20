@@ -28,6 +28,13 @@ pool 활성화 토글을 끄는 것도 삭제이므로 일반 apply 절차로 �
 resource를 `gke/dispatcher-current` state에 `0 added, 0 changed, 0 destroyed`로 import했다. Cluster의
 기존 deletion protection을 유지하며 두 node pool의 Terraform deletion policy도 `PREVENT`로
 전환했다. 최종 `training-current` plan은 `No changes`다.
+실제 적용 내역과 당시 검증 결과는
+[`2026-09-20 dispatcher GKE 실행·IaC 기록`](../docs/runs/2026-09-20-dispatcher-gke.ko.md)에
+보존한다.
+
+> `environments/dispatcher-current/profiles/`에서 현행 state에 적용하는 파일은
+> `training-current.tfvars`뿐이다. `benchmark`, `full`, `compute-only`의 `.example` 파일은
+> [미구현 cloud roadmap](../docs/roadmap.ko.md)을 위한 설계 예제이며 현재 backend에 적용하지 않는다.
 
 ## 사전 준비
 
@@ -132,7 +139,8 @@ replace를 거부한다.
   state의 disposable 환경에서만 한다.
 - `terraform apply -auto-approve`, `-target`과 state 직접 편집은 정상 workflow에서 사용하지 않는다.
 
-Node pool은 `system`, `pipeline`, `serving`, `loadgen`을 독립적으로 활성화할 수 있다. 따라서
+재사용 module은 `system`, `pipeline`, `serving`, `loadgen`을 독립적으로 활성화할 수 있다. 실제
+보존 cluster에는 `system`과 `pipeline`만 존재한다. Module 수준에서는
 system과 loadgen을 모두 포함하거나 모두 제외할 수 있다. 단, system 없는 구성은 명시적인
 `allow_without_system_pool`, 전체 pool이 없는 control-plane-only 구성은 추가적인
 `allow_control_plane_only` 승인이 필요하다. KFP/KServe addon 검사는 system pool이 없는 환경을

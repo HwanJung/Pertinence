@@ -1,3 +1,4 @@
+# UNIMPLEMENTED EXAMPLE. Never apply to dispatcher-current state.
 # No KFP/KServe controllers may be installed without system-pool.
 allow_without_system_pool = true
 vcpu_quota_budget         = 8

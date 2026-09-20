@@ -187,9 +187,9 @@ def test_gke_submit_passes_service_account_and_gcs_parameters(monkeypatch, capsy
 
 
 def test_gke_manifests_select_gcs_and_existing_kfp_runner():
-    root = Path(__file__).parents[1]
-    launcher = yaml.safe_load((root / "gke/kfp-launcher-configmap.yaml").read_text())
-    service_account = yaml.safe_load((root / "gke/service-account.yaml").read_text())
+    root = Path(__file__).parents[3]
+    launcher = yaml.safe_load((root / "cloud/kfp/kfp-launcher-configmap.yaml").read_text())
+    service_account = yaml.safe_load((root / "cloud/kfp/service-account.yaml").read_text())
     assert launcher["data"]["defaultPipelineRoot"].startswith("gs://")
     assert "gs:" in launcher["data"]["providers"]
     assert "fromEnv: true" in launcher["data"]["providers"]

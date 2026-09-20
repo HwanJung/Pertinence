@@ -4,6 +4,10 @@
 않고 Terraform state에 가져온다. `imports.tf`는 현재 project와 resource ID에만 사용하며 다른
 환경을 만들 때 복사하지 않는다.
 
+현행 remote state에 사용할 수 있는 최종 profile은 `profiles/training-current.tfvars`뿐이다.
+이 디렉터리의 `.example` profile은 미구현 serving/benchmark 설계 예제이며 이 backend에서 plan
+또는 apply하지 않는다.
+
 ## 1. Import-only 단계
 
 먼저 [`../../README.md`](../../README.md)의 bootstrap을 완료한다. 이후 repository root에서 다음을
@@ -63,7 +67,8 @@ inventory에서 확인하고, 장기 반복 window가 필요하면 별도 비파
 - `full.tfvars.example`: 네 pool 전체, 실제 48-vCPU quota 확인 전 apply 금지
 - `compute-only.tfvars.example`: system/loadgen 없이 pipeline만 사용하는 addon 비지원 예제
 
-Example profile은 신규 cluster 이름과 별도 backend prefix를 가진 새 environment root에서만 사용한다.
+Example profile은 [cloud roadmap](../../../docs/roadmap.ko.md)의 미구현 구성을 설명할 뿐이다.
+구현을 시작하더라도 신규 cluster 이름과 별도 backend prefix를 가진 새 environment root에서만 사용한다.
 현재 state에 다른 profile을 넣으면 기존 pool 삭제가 plan될 수 있으므로 사용하지 않는다.
 
 KFP/KServe 설치 전에는 `terraform output -json`의 `kfp_addons_supported`가 `true`인지 검사한다.

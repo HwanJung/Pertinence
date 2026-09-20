@@ -1,121 +1,84 @@
 # PERTINENCE CIFAR experiments
 
-This repository implements the method in **PERTINENCE: Input-based
-Opportunistic Neural Network Dynamic Execution** (arXiv:2507.01695v3) for
-CIFAR-10. It retains the ten non-dominated checkpoints from the current
-`chenyaofo/pytorch-cifar-models` CIFAR-10 catalog as the static accuracy-cost
-boundary, while the current dynamic dispatcher routes among three representative
-experts.
+This repository implements a reproducible CIFAR adaptation of **PERTINENCE:
+Input-based Opportunistic Neural Network Dynamic Execution**. The current
+dispatcher routes each input among three frozen experts while preserving the
+ten-model CIFAR-10 accuracy–cost boundary as a static comparison.
 
-The completed CIFAR-10 experiment and the new CIFAR-100 work are isolated under
-`experiments/cifar10/` and `experiments/cifar100/`. Shared PERTINENCE code stays
-under `src/pertinence/`; generated assets, caches, and runs use the matching
-`artifacts/<dataset>/` directory.
+Two execution paths are intentionally separate:
+
+- the local CUDA workflow builds native PyTorch caches and runs the original CLI stages;
+- the verified cloud workflow runs the portable seven-component pipeline on GKE and OSS
+  Kubeflow Pipelines (KFP).
+
+The cloud documentation describes what was actually deployed and exercised. Future KServe
+and online-serving work is isolated in a roadmap and is not presented as current capability.
 
 ## Repository layout
 
 ```text
+src/pertinence/          # shared contracts, routing, training, metrics, and runtime code
+scripts/                 # shared asset, cache, preflight, and Terraform helpers
 experiments/
-├── cifar10/             # config, catalog, experiment docs, figures, analysis scripts
-└── cifar100/            # CIFAR-100 catalog and all new experiment-specific work
-cloud/                   # GKE, KFP training, and KServe benchmark environment
-src/pertinence/          # shared routing, training, optimization, cache, and metrics code
-scripts/                 # shared command-line entry points
-artifacts/
-├── cifar10/             # downloaded assets, caches, and completed runs (git-ignored)
-└── cifar100/            # reserved for CIFAR-100 runtime outputs (git-ignored)
+├── method.ko.md         # paper method and project-wide reproduction assumptions
+├── cifar10/             # runnable CIFAR-10 configuration, results, figures, and scripts
+└── cifar100/            # staged CIFAR-100 catalog work
+pipelines/pertinence/    # portable components, KFP DAG, image build, and tests
+cloud/
+├── docs/                # verified architecture, runbook, run records, and future roadmap
+├── iac/                 # protected GKE Terraform state and reusable module
+└── kfp/                 # repository-owned KFP launcher and service-account manifests
+artifacts/<dataset>/     # downloaded assets, caches, compiled IR, and run outputs (ignored)
 ```
 
-Dataset-specific files must not be added back to root-level `configs/`,
-`data/`, `docs/`, or `figures/` directories.
+Dataset-specific generated or versioned material stays below its experiment directory.
+Do not recreate root-level `configs/`, `data/`, `docs/`, or `figures/` directories.
 
-The shared GKE environment, internal cloud resources, node-pool isolation, and the
-KFP-to-KServe experiment lifecycle are defined in the
-[cloud environment guide](cloud/README.md). Reproducible cluster provisioning, existing-cluster
-adoption, optional node-pool profiles, and remote state operations are documented in the
-[Terraform GKE IaC guide](cloud/iac/README.md).
+## Verified state
 
-## Scope
+The current production configuration uses these routing experts:
 
-- Executable reproduction pipeline: CIFAR-10. CIFAR-100 adaptation is staged in
-  its own experiment directory.
-- Static Pareto boundary: the ten cost-sorted models in
-  `experiments/cifar10/data/model_catalog.csv` with `pareto=True`.
-- Routing experts: `shufflenetv2_x0_5`, `mobilenetv2_x0_5`, and `resnet56`.
-- Dispatcher: frozen `shufflenetv2_x0_5` features followed by one trainable
-  linear layer.
-- Labels: cheapest expert that classifies each sample correctly; expert 0 is
-  the no-correct fallback.
-- Loss: the literal argmax-indexed asymmetric penalty loss from Eq. (6)-(7),
-  with INS, ISNS, or ENS weighting.
-- Search: NSGA-II with the paper's population, generation, SBX, mutation, and
-  per-individual epoch defaults.
-- Cost: catalog MAdds converted with the single convention `1 MAC = 2 FLOPs`;
-  dispatcher overhead is included and extractor/expert computation is shared.
+1. `shufflenetv2_x0_5` — also the frozen feature extractor and fallback;
+2. `mobilenetv2_x0_5`;
+3. `resnet56`.
 
-This is a method-faithful adaptation, not a numeric reproduction of Figure
-6(c). The paper used unavailable ResNet8/14 checkpoints and dominated VGG
-models; the requested current Pareto front is a different expert pool.
+The successful GKE run completed 50 generations × 50 individuals, evaluated 233 retained
+dispatchers on the final split, and registered all 233 results. Its immutable identifiers,
+metrics, incidents, and preserved resources are recorded in the
+[2026-09-20 GKE run report](cloud/docs/runs/2026-09-20-dispatcher-gke.ko.md).
+
+The versioned local result table and final figure predate the three-expert configuration and
+belong to a completed four-expert run. They are retained as an explicitly historical result in
+[the local four-expert report](experiments/cifar10/docs/local-4expert-results.ko.md), not as the
+output of the current config.
 
 ## Environment
 
-Python 3.11 is the canonical interpreter. The pinned package set also supports
-Python 3.12.
+Python 3.11 is canonical; Python 3.12 is also supported.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.lock
 .venv/bin/python -m pip install -e . --no-deps
-source .venv/bin/activate
 ```
 
-The root lock captures the Linux CUDA environment used for the completed
-CIFAR-10 experiment. On Windows, install the project extras directly so the
-platform marker selects the current Blackwell-compatible PyTorch build:
+Downloaded datasets, source archives, checkpoints, caches, and raw run output belong under
+`artifacts/<dataset>/`. Network access occurs only during explicit asset preparation or cloud
+operations; model loading never downloads code or checkpoints implicitly.
 
-```powershell
-uv venv .venv --python 3.11
-uv pip install --python .venv\Scripts\python.exe --editable ".[dev,pipeline,kfp]"
-uv pip install --python .venv\Scripts\python.exe --reinstall --no-deps `
-  torch==2.14.0 torchvision==0.29.0 `
-  --index-url https://download.pytorch.org/whl/cu130
-```
+## Local CIFAR-10 reproduction
 
-Windows uses PyTorch 2.14 / torchvision 0.29, while non-Windows environments
-retain the original PyTorch 2.5.1 / torchvision 0.20.1 reproduction pins. The
-explicit CUDA-index step is required because the default Windows PyPI wheel is
-CPU-only; the CUDA 13.0 wheel supports the Blackwell `sm_120` target.
+The local execution contract, uninterrupted command sequence, acceptance gates, retry rules,
+and final-holdout boundary are in the
+[CIFAR-10 local reproduction guide](experiments/cifar10/docs/local-reproduction.ko.md).
 
-Downloaded files and run outputs live under `artifacts/<dataset>/` and are
-intentionally git-ignored. Network access occurs only in the explicit asset
-preparation command; model loading never calls PyTorch Hub or a URL.
-
-## Staged workflow
-
-The dataset-independent Kubeflow components also run locally with Parquet/ONNX
-bundles. They provide contract validation, separate routing caches, dispatcher
-search, final evaluation, and transactional SQLite registration. See the
-[local component guide](pipelines/pertinence/docs/local-components.ko.md)
-for packaging, CLI commands, and optional KFP IR compilation. No cluster setup
-is required for these local components.
-
-Run the read-only preflight before GPU inference. It verifies pinned package
-versions, every asset hash, extracted source bytes, CIFAR-10 sizes, free disk,
-the configured device, all three routing checkpoint loads, tiny real-model forwards,
-and the planned cache fingerprints. Do not use a CPU override for a production
-run: it is only useful for local asset smoke testing.
+The short path is:
 
 ```bash
-# 1. Download or verify CIFAR-10, pinned source, and the boundary-model assets.
-python scripts/prepare_assets.py --manifest experiments/cifar10/configs/assets.yaml --artifacts-dir artifacts/cifar10
-python scripts/prepare_assets.py --manifest experiments/cifar10/configs/assets.yaml --artifacts-dir artifacts/cifar10 --verify-only
+python scripts/prepare_assets.py \
+  --manifest experiments/cifar10/configs/assets.yaml \
+  --artifacts-dir artifacts/cifar10
 
-# Extract only after the archive hashes have passed verification.
-tar -xzf artifacts/cifar10/datasets/cifar-10-python.tar.gz -C artifacts/cifar10/datasets
-tar -xzf artifacts/cifar10/sources/pytorch-cifar-models-786c16252c0fc58ee9adac063f8337cc4a7a497a.tar.gz -C artifacts/cifar10/sources
-
-# 2. Read-only production preflight. This must report status=passed on CUDA.
 python scripts/preflight.py \
   --config experiments/cifar10/configs/experiment.yaml \
   --manifest experiments/cifar10/configs/assets.yaml \
@@ -123,64 +86,29 @@ python scripts/preflight.py \
   --dataset-dir artifacts/cifar10/datasets \
   --source-dir artifacts/cifar10/sources/pytorch-cifar-models-786c16252c0fc58ee9adac063f8337cc4a7a497a \
   --cache-dir artifacts/cifar10/cache/pareto
-
-# 3. GPU inference: validate the three routing experts and build immutable caches.
-python scripts/build_cache.py \
-  --config experiments/cifar10/configs/experiment.yaml \
-  --manifest experiments/cifar10/configs/assets.yaml \
-  --artifacts-dir artifacts/cifar10 \
-  --dataset-dir artifacts/cifar10/datasets \
-  --source-dir artifacts/cifar10/sources/pytorch-cifar-models-786c16252c0fc58ee9adac063f8337cc4a7a497a \
-  --cache-dir artifacts/cifar10/cache/pareto
-
-# 4. Check train/search baselines and oracle without opening final holdout.
-pertinence baseline \
-  --config experiments/cifar10/configs/experiment.yaml \
-  --cache-dir artifacts/cifar10/cache/pareto \
-  --output artifacts/cifar10/runs/pareto/baselines.json
-
-# 5. Train/evaluate one paper-style fixed directional penalty.
-pertinence fixed \
-  --config experiments/cifar10/configs/experiment.yaml \
-  --cache-dir artifacts/cifar10/cache/pareto \
-  --output artifacts/cifar10/runs/pareto/fixed.json
-
-# 6. Run the full NSGA-II search (50 x 50 individuals, 20 FC epochs each).
-pertinence search \
-  --config experiments/cifar10/configs/experiment.yaml \
-  --cache-dir artifacts/cifar10/cache/pareto \
-  --output artifacts/cifar10/runs/pareto/search.json
-
-# 7. Evaluate only the retained front on the untouched 2,000-image split.
-pertinence final \
-  --config experiments/cifar10/configs/experiment.yaml \
-  --cache-dir artifacts/cifar10/cache/pareto \
-  --search-result artifacts/cifar10/runs/pareto/search.json \
-  --output artifacts/cifar10/runs/pareto/final.json
 ```
 
-Cache inference compares every routing expert against its catalog Top-1 on the
-complete official 10,000-image test set. The accepted delta is -0.25 to +0.75
-percentage points because the catalog records a best-validation training-log
-value, while pinned-checkpoint reevaluation can differ slightly by runtime. A
-failure occurs before any new cache is committed. This fixed-expert integrity
-check is not exposed to NSGA-II; `baseline`, `fixed`, and `search`
-load only dispatcher-train and GA-search caches. `final` is the first command
-that evaluates a selected dispatcher on the 2,000-image holdout.
+Continue with cache generation, baseline, fixed dispatcher, search, and final evaluation only
+after the preflight passes on the configured CUDA device.
 
-For the exact uninterrupted command block, pass/fail gates, rerun behavior,
-and long-running search precautions, see
-`experiments/cifar10/docs/runbook.ko.md`.
+## Portable pipeline and GKE
 
-The default split uses all 50,000 official training images for dispatcher
-training, a deterministic 8,000-image portion of the official test set for GA
-fitness, and the remaining 2,000 images only for final evaluation. The paper
-does not publish exact sample IDs, so the generated split manifest and its hash
-are part of every cache/run fingerprint.
+- [Pipeline package README](pipelines/pertinence/README.md): bundle contracts, local component
+  execution, IR compilation, and submission interface.
+- [Cloud architecture](cloud/docs/architecture.ko.md): deployed boundaries and scheduling.
+- [Cloud runbook](cloud/docs/runbook.ko.md): Terraform safety, GCS preparation, image build,
+  compile, submit, verification, and preservation procedure.
+- [Cloud roadmap](cloud/docs/roadmap.ko.md): explicitly unimplemented KServe and benchmark work.
+- [Terraform guide](cloud/iac/README.md): state bootstrap, adoption, plan guards, and profiles.
 
-See `experiments/cifar10/docs/reproduction-plan.ko.md` for the detailed protocol, assumptions,
-acceptance gates, and expected artifacts.
+## Development checks
 
-The completed experiment analysis, same-split expert comparisons, limitations,
-and regenerated final figures are documented in
-`experiments/cifar10/docs/results.ko.md`.
+```bash
+.venv/bin/python -m pytest
+.venv/bin/ruff check .
+terraform fmt -check -recursive cloud/iac
+terraform -chdir=cloud/iac/modules/gke test
+```
+
+Ordinary unit tests do not require network access or downloaded assets. Tests marked
+`integration` require the documented assets and PyTorch environment.
