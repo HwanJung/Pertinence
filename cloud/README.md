@@ -3,8 +3,10 @@
 이 디렉터리는 실제 GKE에서 완료한 CIFAR-10 dispatcher 학습 환경의 cloud 정본이다. 현행 범위는
 GKE Standard 위의 OSS Kubeflow Pipelines(KFP) 2.17.0과 CPU component 실행이다.
 
-KServe, online router, serving/loadgen pool과 latency benchmark는 배포되지 않았다. 해당 내용은
-[roadmap](docs/roadmap.ko.md)에만 미래 작업으로 기록한다.
+KServe, online router, serving/loadgen pool과 latency benchmark는 아직 배포되지 않았다. 구현된
+배포 자산과 benchmark profile의 실제 실행 절차는
+[KServe benchmark runbook](docs/kserve-benchmark-runbook.ko.md), 남은 보안·운영 완료 조건은
+[roadmap](docs/roadmap.ko.md)에 기록한다.
 
 ## 2026-09-20 확인 상태
 
@@ -33,7 +35,8 @@ cloud/
 ├── docs/
 │   ├── architecture.ko.md                 # 실제 배포 경계와 데이터 흐름
 │   ├── runbook.ko.md                      # 반복 실행과 보존 운영 절차
-│   ├── roadmap.ko.md                      # 미구현 serving/benchmark 계획
+│   ├── kserve-benchmark-runbook.ko.md     # 미실행 online benchmark 절차
+│   ├── roadmap.ko.md                      # 미배포 목표와 남은 완료 조건
 │   └── runs/2026-09-20-dispatcher-gke.ko.md
 ├── iac/                                   # GKE Terraform state와 reusable module
 └── kfp/                                   # launcher ConfigMap과 KFP runner 참조 manifest
@@ -45,7 +48,9 @@ cloud/
 2. 반복 실행과 운영: [runbook](docs/runbook.ko.md)
 3. 실제 실행 결과와 immutable ID: [run record](docs/runs/2026-09-20-dispatcher-gke.ko.md)
 4. Terraform state와 변경 안전성: [IaC guide](iac/README.md)
-5. 미구현 확장: [roadmap](docs/roadmap.ko.md)
+5. KServe benchmark 실행 설계: [benchmark runbook](docs/kserve-benchmark-runbook.ko.md)
+6. 준비 완료 후 20단계: [실제 실행 절차](docs/kserve-benchmark-execution.ko.md)
+7. 미배포 목표와 남은 완료 조건: [roadmap](docs/roadmap.ko.md)
 
 Run record의 version과 상태는 해당 실행 시점의 증거다. 반복 실행 전에는 runbook의 read-only
 inventory 절차로 현재 상태를 다시 확인한다. Architecture와 runbook이 roadmap과 충돌하면 전자가

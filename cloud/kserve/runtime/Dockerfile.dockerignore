@@ -1,0 +1,11 @@
+.git
+.venv
+artifacts
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+*.pyc
+cloud/kserve/modelcar
+cloud/iac
+experiments
+tests

@@ -13,3 +13,9 @@ Runtime files are isolated under `artifacts/cifar10/`. Start with
 [`docs/local-reproduction.ko.md`](docs/local-reproduction.ko.md) for the current local workflow.
 The verified three-expert cloud result is documented separately in the
 [GKE run record](../../cloud/docs/runs/2026-09-20-dispatcher-gke.ko.md).
+
+The fixed two-dataset, five-arm online measurement contract is in
+[`configs/benchmark.yaml`](configs/benchmark.yaml). Its dataset provenance, low-load schedule,
+invalidation rules, and descriptive statistical analysis are documented in
+[`docs/kserve-benchmark-protocol.ko.md`](docs/kserve-benchmark-protocol.ko.md). The presence of this
+configuration does not mean that a GKE benchmark has completed.

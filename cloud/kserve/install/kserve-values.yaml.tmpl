@@ -1,0 +1,50 @@
+kserve:
+  version: v0.20.0
+  controller:
+    deploymentMode: Standard
+    image: kserve/kserve-controller
+    # The chart renders image:tag. tag@digest is a valid immutable OCI reference.
+    tag: "v0.20.0@${KSERVE_CONTROLLER_DIGEST}"
+    imagePullPolicy: IfNotPresent
+    rbacProxyImage: "${KSERVE_RBAC_PROXY_IMAGE}"
+    nodeSelector:
+      cloud.google.com/gke-nodepool: system-pool
+    gateway:
+      disableIngressCreation: true
+      disableIstioVirtualHost: true
+      ingressGateway:
+        enableGatewayApi: false
+        createGateway: false
+  storage:
+    image: kserve/storage-initializer
+    tag: "v0.20.0@${KSERVE_STORAGE_INITIALIZER_DIGEST}"
+    enableModelcar: true
+    uidModelcar: 65532
+    cpuModelcar: 10m
+    memoryModelcar: 15Mi
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      privileged: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+  agent:
+    image: kserve/agent
+    tag: "v0.20.0@${KSERVE_AGENT_DIGEST}"
+  router:
+    image: kserve/router
+    tag: "v0.20.0@${KSERVE_ROUTER_DIGEST}"
+    imagePullPolicy: IfNotPresent
+  servingruntime:
+    art:
+      image: kserve/art-explainer
+      defaultVersion: "v0.20.0@${KSERVE_ART_EXPLAINER_DIGEST}"
+  metricsaggregator:
+    enableMetricAggregation: "false"
+    enablePrometheusScraping: "false"
+  localmodel:
+    enabled: false
+    defaultJobImage: kserve/storage-initializer
+    defaultJobTag: "v0.20.0@${KSERVE_STORAGE_INITIALIZER_DIGEST}"
+  security:
+    autoMountServiceAccountToken: true

@@ -53,7 +53,9 @@ kubectl get deployments,pvc -n "$NAMESPACE"
 
 ## 2. Terraform drift와 보호 확인
 
-현재 environment는 `training-current.tfvars`만 사용한다.
+KFP pipeline 반복 실행에는 baseline인 `training-current.tfvars`를 사용한다. Online benchmark를 위해
+두 pool을 추가하는 `benchmark-current.tfvars`는 이 절차가 아니라
+[KServe benchmark runbook](kserve-benchmark-runbook.ko.md)의 saved-plan guard를 따른다.
 
 ```bash
 terraform -chdir=cloud/iac/environments/dispatcher-current init \

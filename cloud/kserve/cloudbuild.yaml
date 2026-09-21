@@ -1,0 +1,77 @@
+# Canonical linux/amd64 build path. Inputs are exact GCS generations in a sealed manifest.
+timeout: 3600s
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _REPOSITORY: asia-northeast3-docker.pkg.dev/pertinence-509116/pertinence
+  _BUILD_ID: local-replace
+  _PYTHON_BASE_IMAGE: python:3.11-slim@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  _MODELCAR_BASE_IMAGE: busybox:1.37.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  _BUILD_INPUT_MANIFEST_URI: gs://replace/build-input-manifest.json#0
+steps:
+  - id: fetch-immutable-bundles
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        python3 cloud/kserve/scripts/build_inputs.py fetch \
+          --manifest-uri "${_BUILD_INPUT_MANIFEST_URI}" \
+          --manifest-output /workspace/build-input-manifest.json \
+          --output /workspace/input \
+          --receipt /workspace/build-input-receipt.json
+  - id: runtime
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        docker buildx build --platform linux/amd64 --push \
+          --file cloud/kserve/runtime/Dockerfile \
+          --build-arg "PYTHON_BASE_IMAGE=${_PYTHON_BASE_IMAGE}" \
+          --tag "${_REPOSITORY}/serving-runtime:${_BUILD_ID}" .
+  - id: prepare-modelcars
+    name: ${_PYTHON_BASE_IMAGE}
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        for expert in shufflenetv2_x0_5 mobilenetv2_x0_5 resnet56; do
+          python cloud/kserve/modelcar/prepare_bundle.py expert \
+            "/workspace/input/experts/${expert}" "/workspace/modelcars/${expert}"
+        done
+        python cloud/kserve/modelcar/prepare_bundle.py dynamic-router \
+          /workspace/input/evaluated /workspace/modelcars/dispatcher-000733
+  - id: modelcars
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        for expert in shufflenetv2_x0_5 mobilenetv2_x0_5 resnet56; do
+          docker build --platform linux/amd64 --file cloud/kserve/modelcar/Dockerfile \
+            --build-arg "MODELCAR_BASE_IMAGE=${_MODELCAR_BASE_IMAGE}" \
+            --tag "${_REPOSITORY}/${expert}-modelcar:${_BUILD_ID}" "/workspace/modelcars/${expert}"
+          docker push "${_REPOSITORY}/${expert}-modelcar:${_BUILD_ID}"
+        done
+        docker build --platform linux/amd64 --file cloud/kserve/modelcar/Dockerfile \
+          --build-arg "MODELCAR_BASE_IMAGE=${_MODELCAR_BASE_IMAGE}" \
+          --tag "${_REPOSITORY}/dispatcher-000733-modelcar:${_BUILD_ID}" \
+          /workspace/modelcars/dispatcher-000733
+        docker push "${_REPOSITORY}/dispatcher-000733-modelcar:${_BUILD_ID}"
+  - id: seal-deployment
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        cloud/kserve/scripts/seal-deployment-images.sh \
+          "${_REPOSITORY}" "${_BUILD_ID}" /workspace/deployment-images.json
+artifacts:
+  objects:
+    location: gs://pertinence-509116-pertinence-runs/pertinence/builds/${BUILD_ID}/
+    paths:
+      - deployment-images.json
+      - build-input-manifest.json
+      - build-input-receipt.json

@@ -17,7 +17,12 @@ node-pool scheduling, final 평가와 run-scoped SQLite registration까지 실�
 - public KFP endpoint와 multi-user authentication;
 - 중앙 Model Registry.
 
-미래 설계는 [roadmap](roadmap.ko.md)에만 기록한다.
+미배포 목표와 남은 완료 조건은 [roadmap](roadmap.ko.md)에 기록한다.
+
+저장소의 serving runtime, KServe manifest와 현재 cluster용 Terraform benchmark profile은 실행
+준비 자산이다. 실제 cluster 배포와 성공 benchmark evidence가 없으면 이 문서의 현행 미배포 상태를
+바꾸지 않는다. 실행 전후 gate와 기록 기준은
+[KServe benchmark runbook](kserve-benchmark-runbook.ko.md)을 따른다.
 
 ## 시스템 컨텍스트
 

@@ -32,9 +32,10 @@ resource를 `gke/dispatcher-current` state에 `0 added, 0 changed, 0 destroyed`�
 [`2026-09-20 dispatcher GKE 실행·IaC 기록`](../docs/runs/2026-09-20-dispatcher-gke.ko.md)에
 보존한다.
 
-> `environments/dispatcher-current/profiles/`에서 현행 state에 적용하는 파일은
-> `training-current.tfvars`뿐이다. `benchmark`, `full`, `compute-only`의 `.example` 파일은
-> [미구현 cloud roadmap](../docs/roadmap.ko.md)을 위한 설계 예제이며 현재 backend에 적용하지 않는다.
+> `environments/dispatcher-current/profiles/benchmark-current.tfvars`는 기존 두 pool과 KFP를 보존한
+> 채 serving/loadgen pool만 생성하는 유일한 확장 profile이다. 전용 `benchmark-pools-create` guard를
+> 통과한 saved plan만 적용한다. `benchmark`, `full`, `compute-only`의 `.example` 파일은 설계
+> 예제이며 현재 backend에 적용하지 않는다.
 
 ## 사전 준비
 
@@ -126,13 +127,16 @@ terraform show change.tfplan
 terraform apply change.tfplan
 ```
 
-현재 cluster의 import/protection 단계는 plan JSON을
+현재 cluster의 import/protection/benchmark-pool 단계는 plan JSON을
 [`scripts/terraform_plan_guard.py`](../../scripts/terraform_plan_guard.py)에 각각 `no-op`과
-`protection` mode로 통과시킨 saved plan만 적용한다. 신규 환경도 `fresh-create` mode로 delete와
-replace를 거부한다.
+`protection`, `benchmark-pools-create` mode로 통과시킨 saved plan만 적용한다. Benchmark mode는
+정확히 serving/loadgen indexed node-pool 두 주소의 create만 허용하고 cluster와 기존 pool 변경,
+부분 생성, 예상 밖 create를 거부한다. 신규 환경도 `fresh-create` mode로 delete와 replace를 거부한다.
 
 - 현재 cluster import에서는 `create/update/delete/replace = 0`이 될 때까지 apply하지 않는다.
 - 최초 보호 단계에서는 cluster deletion protection과 node pool 삭제 보호만 변경한다.
+- 현재 cluster의 benchmark 확장은 네 pool 최대치 24 vCPU quota를 확인하고 두 신규 pool create만
+  담긴 saved plan을 적용한다. 측정 중 `pipeline-pool`은 0이어야 하므로 실제 topology는 16 vCPU다.
 - node pool 제거는 삭제 보호를 해제하는 별도 plan/apply와 실제 제거 plan/apply의 두 단계로
   나누고, 정확한 대상과 state를 사람이 승인한다.
 - `terraform destroy`는 현재 cluster나 bootstrap root에서 실행하지 않는다. 삭제 검증은 별도

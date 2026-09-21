@@ -1,0 +1,41 @@
+crds:
+  enabled: true
+prometheus:
+  enabled: false
+global:
+  leaderElection:
+    namespace: cert-manager
+image:
+  repository: quay.io/jetstack/cert-manager-controller
+  tag: v1.20.4
+  digest: "${CERT_MANAGER_CONTROLLER_DIGEST}"
+webhook:
+  image:
+    repository: quay.io/jetstack/cert-manager-webhook
+    tag: v1.20.4
+    digest: "${CERT_MANAGER_WEBHOOK_DIGEST}"
+  nodeSelector: &system_node
+    cloud.google.com/gke-nodepool: system-pool
+cainjector:
+  image:
+    repository: quay.io/jetstack/cert-manager-cainjector
+    tag: v1.20.4
+    digest: "${CERT_MANAGER_CAINJECTOR_DIGEST}"
+  nodeSelector: *system_node
+startupapicheck:
+  image:
+    repository: quay.io/jetstack/cert-manager-startupapicheck
+    tag: v1.20.4
+    digest: "${CERT_MANAGER_STARTUPAPICHECK_DIGEST}"
+  nodeSelector: *system_node
+acmesolver:
+  image:
+    repository: quay.io/jetstack/cert-manager-acmesolver
+    tag: v1.20.4
+    digest: "${CERT_MANAGER_ACMESOLVER_DIGEST}"
+nodeSelector: *system_node
+securityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+

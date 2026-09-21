@@ -1,7 +1,8 @@
 # Cloud serving·benchmark 로드맵
 
-> 상태: **미구현·미배포**
-> 이 문서는 현행 GKE/KFP capability나 완료된 실험 결과를 설명하지 않는다.
+> 상태: **구현 진행·미배포**
+> 이 문서는 현행 GKE/KFP capability나 완료된 online 실험 결과를 설명하지 않는다. 저장소에 구현된
+> 항목도 실제 cluster smoke와 benchmark run record가 생기기 전에는 배포 완료로 간주하지 않는다.
 
 현재 검증된 범위는 GKE Standard와 OSS KFP에서 dispatcher를 학습·평가하고 evaluated bundle을
 GCS artifact로 보존하는 것까지다. 실제 상태는 [architecture](architecture.ko.md), 반복 실행은
@@ -52,17 +53,20 @@ accuracy/MFLOPs와 online latency/throughput은 서로 다른 실험 결과로 �
    - 이전 bundle로 deterministic rollback;
    - 전환 전후 correctness와 route telemetry 검증.
 
-## Terraform 예제의 의미
+## Terraform profile의 의미
 
-`cloud/iac/environments/dispatcher-current/profiles/`의 다음 파일은 설계 검토용 미적용 예제다.
+`benchmark-current.tfvars`는 기존 system/pipeline pool과 KFP를 보존하면서 serving/loadgen pool을
+각각 최대 1개 추가하는 현행 cluster용 profile이다. 전용 saved-plan guard는 이 두 indexed resource의
+create만 허용하며 cluster/기존 pool update, delete, replace와 부분 생성을 거부한다. 선언상 최대치는
+24 vCPU이고 실제 benchmark는 pipeline 0을 전제로 16 vCPU다. Profile 존재는 실제 apply 증거가 아니다.
+
+다음 파일은 계속 설계 검토용 미적용 예제다.
 
 - `benchmark.tfvars.example`: system+serving+loadgen;
 - `full.tfvars.example`: system+pipeline+serving+loadgen;
 - `compute-only.tfvars.example`: addon을 지원하지 않는 pipeline-only 예제.
 
-현재 `dispatcher-current` remote state에는 적용하지 않는다. 실제 구현 시 새 environment root와
-고유 backend prefix를 만들고 quota, KServe/Kubernetes compatibility와 disposable smoke를 먼저
-검증한다. 현행 적용 profile은 `training-current.tfvars`뿐이다.
+현재 `dispatcher-current` remote state에는 `.example` profile을 적용하지 않는다.
 
 ## 단계별 완료 조건
 
@@ -86,3 +90,7 @@ accuracy/MFLOPs와 online latency/throughput은 서로 다른 실험 결과로 �
 
 이 조건을 모두 충족하기 전에는 repository README나 architecture에서 KServe serving 또는 GKE
 online 성능을 구현 완료로 표시하지 않는다.
+
+또한 현재 cluster는 NetworkPolicy enforcement가 꺼져 있다. 이를 켜는 작업은 node 재생성을
+수반하므로 이번 benchmark 범위에 포함하지 않으며, descriptive-only 통계와 함께 전체 roadmap을
+완료로 표시하지 않는 명시적 이유로 남긴다.

@@ -10,9 +10,11 @@ system pool is fixed at one node. Imported pools expose their existing taints on
 provider's computed `effective_taints`, so the module ignores the write-only taint representation
 but fails its resource postcondition if the required effective workload taint is missing.
 
-The preserved `dispatcher-current` environment has only `system-pool` and `pipeline-pool`.
-Serving/load-generator support is a reusable module capability for a future environment, not a
-deployed resource; see the [cloud roadmap](../../../docs/roadmap.ko.md).
+The preserved `dispatcher-current` baseline has `system-pool` and `pipeline-pool`. Its
+`benchmark-current.tfvars` profile may add one autoscaled `serving-pool` and one autoscaled
+`loadgen-pool` without disabling or resizing the baseline pools. That expansion is accepted only
+when the environment's saved-plan guard sees exactly those two indexed resource creates. A checked
+in profile describes desired state; it is not evidence that either pool has been deployed.
 
 ```hcl
 module "gke" {
