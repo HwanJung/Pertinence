@@ -1,0 +1,172 @@
+"""Compile the retained seven-component CIFAR-10 bootstrap and training DAG."""
+
+import argparse
+from pathlib import Path
+
+from kfp import compiler, dsl, kubernetes
+
+from .components import make_cifar10_bootstrap_components, make_training_components
+from .pipeline import _gcs_uri, _resources, _schedule_on_pipeline_pool
+
+
+def make_cifar10_pipeline(
+    image: str,
+    *,
+    pipeline_root: str,
+    cpu_threads: int = 4,
+    train_timeout_seconds: int = 259_200,
+    enable_cache: bool = False,
+):
+    pipeline_root = _gcs_uri(pipeline_root)
+    components = {
+        **make_cifar10_bootstrap_components(image),
+        **make_training_components(image, cpu_threads=cpu_threads),
+    }
+
+    @dsl.pipeline(name="pertinence-cifar10-cpu", pipeline_root=pipeline_root)
+    def pipeline(
+        cifar10_uri: str,
+        cifar10_sha256: str,
+        shufflenet_checkpoint_uri: str,
+        shufflenet_checkpoint_sha256: str,
+        mobilenet_checkpoint_uri: str,
+        mobilenet_checkpoint_sha256: str,
+        resnet56_checkpoint_uri: str,
+        resnet56_checkpoint_sha256: str,
+        run_config_uri: str,
+        run_config_sha256: str,
+    ):
+        cifar10 = dsl.importer(
+            artifact_uri=cifar10_uri,
+            artifact_class=dsl.Artifact,
+            reimport=False,
+        )
+        shufflenet = dsl.importer(
+            artifact_uri=shufflenet_checkpoint_uri,
+            artifact_class=dsl.Model,
+            reimport=False,
+        )
+        mobilenet = dsl.importer(
+            artifact_uri=mobilenet_checkpoint_uri,
+            artifact_class=dsl.Model,
+            reimport=False,
+        )
+        resnet56 = dsl.importer(
+            artifact_uri=resnet56_checkpoint_uri,
+            artifact_class=dsl.Model,
+            reimport=False,
+        )
+        config = dsl.importer(
+            artifact_uri=run_config_uri,
+            artifact_class=dsl.Artifact,
+            reimport=False,
+        )
+        prepare = components["prepare"](
+            cifar10_archive=cifar10.output,
+            cifar10_sha256=cifar10_sha256,
+        )
+        export = components["export"](
+            shufflenet_checkpoint=shufflenet.output,
+            shufflenet_sha256=shufflenet_checkpoint_sha256,
+            mobilenet_checkpoint=mobilenet.output,
+            mobilenet_sha256=mobilenet_checkpoint_sha256,
+            resnet56_checkpoint=resnet56.output,
+            resnet56_sha256=resnet56_checkpoint_sha256,
+        )
+        validate = components["validate"](
+            dataset_bundle=prepare.outputs["dataset_bundle"],
+            expert_bundle=export.outputs["expert_bundle"],
+            run_config=config.output,
+            dataset_sha256=prepare.outputs["dataset_bundle_sha256"],
+            expert_sha256=export.outputs["expert_bundle_sha256"],
+            config_sha256=run_config_sha256,
+        )
+        build = components["build"](
+            dataset_bundle=prepare.outputs["dataset_bundle"],
+            expert_bundle=export.outputs["expert_bundle"],
+            normalized_contract=validate.outputs["normalized_contract"],
+            split_manifest=validate.outputs["split_manifest"],
+        )
+        train = components["train"](
+            train_cache=build.outputs["train_cache"],
+            search_cache=build.outputs["search_cache"],
+            normalized_contract=validate.outputs["normalized_contract"],
+        )
+        evaluate = components["evaluate"](
+            final_cache=build.outputs["final_cache"],
+            search_result=train.outputs["search_result"],
+            pareto_bundle=train.outputs["pareto_bundle"],
+            normalized_contract=validate.outputs["normalized_contract"],
+        )
+        register = components["register"](
+            evaluated_bundle=evaluate.outputs["evaluated_bundle"]
+        )
+
+        for task in (prepare, export, validate, build, train, evaluate, register):
+            _schedule_on_pipeline_pool(task)
+
+        _resources(prepare, cpu="2", memory="4Gi")
+        _resources(export, cpu=str(cpu_threads), memory="8Gi")
+        _resources(validate, cpu=str(cpu_threads), memory="6Gi")
+        _resources(build, cpu=str(cpu_threads), memory="12Gi")
+        _resources(train, cpu=str(cpu_threads), memory="8Gi")
+        kubernetes.set_timeout(train, seconds=train_timeout_seconds)
+        _resources(evaluate, cpu="2", memory="4Gi")
+        _resources(register, cpu="1", memory="2Gi")
+        for task in (prepare, export, validate, build, train, evaluate):
+            task.set_caching_options(enable_cache)
+        for task in (prepare, export, validate, build, evaluate, register):
+            task.set_retry(1)
+        train.set_retry(0)
+        register.set_caching_options(False)
+
+    return pipeline
+
+
+def compile_cifar10_pipeline(
+    *,
+    image: str,
+    pipeline_root: str,
+    output: str | Path,
+    cpu_threads: int = 4,
+    train_timeout_seconds: int = 259_200,
+    enable_cache: bool = False,
+) -> None:
+    """Compile the retained legacy package without contacting a cluster."""
+
+    compiler.Compiler().compile(
+        make_cifar10_pipeline(
+            image,
+            pipeline_root=pipeline_root,
+            cpu_threads=cpu_threads,
+            train_timeout_seconds=train_timeout_seconds,
+            enable_cache=enable_cache,
+        ),
+        str(Path(output)),
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--pipeline-root", required=True, type=_gcs_uri)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--cpu-threads", type=int, default=4)
+    parser.add_argument("--train-timeout-seconds", type=int, default=259_200)
+    cache = parser.add_mutually_exclusive_group()
+    cache.add_argument("--enable-cache", action="store_true", dest="enable_cache")
+    cache.add_argument("--disable-cache", action="store_false", dest="enable_cache")
+    parser.set_defaults(enable_cache=False)
+    args = parser.parse_args()
+    compile_cifar10_pipeline(
+        image=args.image,
+        pipeline_root=args.pipeline_root,
+        output=args.output,
+        cpu_threads=args.cpu_threads,
+        train_timeout_seconds=args.train_timeout_seconds,
+        enable_cache=args.enable_cache,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -340,95 +340,6 @@ spec:
         configMap:
           name: promotion-dispatcher-000733
 ---
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: router-static-resnet
-  namespace: pertinence-serving
-  labels:
-    app.kubernetes.io/part-of: pertinence
-    pertinence.dev/benchmark-role: router
-  annotations:
-    serving.kserve.io/deploymentMode: Standard
-    pertinence.dev/promotion-id: dispatcher-000733
-    pertinence.dev/promotion-fingerprint: "${PROMOTION_FINGERPRINT}"
-spec:
-  predictor:
-    minReplicas: 1
-    maxReplicas: 1
-    serviceAccountName: serving-runner
-    nodeSelector:
-      cloud.google.com/gke-nodepool: serving-pool
-    tolerations:
-      - key: workload
-        operator: Equal
-        value: pertinence-serving
-        effect: NoSchedule
-    securityContext:
-      runAsNonRoot: true
-      runAsUser: 65532
-      runAsGroup: 65532
-      fsGroup: 65532
-      seccompProfile: {type: RuntimeDefault}
-    containers:
-      - name: kserve-container
-        image: "${RUNTIME_IMAGE}"
-        imagePullPolicy: IfNotPresent
-        args:
-          - serve
-          - router
-          - --promotion
-          - /etc/pertinence/promotion.json
-          - --router-mode
-          - static-resnet
-          - --expert-url
-          - resnet56=http://expert-resnet56-predictor.pertinence-serving.svc.cluster.local
-          - --host
-          - 0.0.0.0
-          - --port
-          - "8080"
-        env:
-          - {name: ORT_INTRA_OP_NUM_THREADS, value: "1"}
-          - {name: ORT_INTER_OP_NUM_THREADS, value: "1"}
-          - {name: PERTINENCE_WORKERS, value: "1"}
-        ports:
-          - {name: http-v2, containerPort: 8080}
-        resources:
-          requests:
-            cpu: "1"
-            memory: 1Gi
-          limits:
-            cpu: "1"
-            memory: 1Gi
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities: {drop: ["ALL"]}
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 65532
-        volumeMounts:
-          - name: promotion
-            mountPath: /etc/pertinence
-            readOnly: true
-        startupProbe:
-          httpGet: {path: /v2/health/ready, port: http-v2}
-          failureThreshold: 60
-          periodSeconds: 2
-        readinessProbe:
-          httpGet: {path: /v2/health/ready, port: http-v2}
-          periodSeconds: 2
-          timeoutSeconds: 1
-          failureThreshold: 3
-        livenessProbe:
-          httpGet: {path: /v2/health/live, port: http-v2}
-          periodSeconds: 10
-          timeoutSeconds: 1
-          failureThreshold: 3
-    volumes:
-      - name: promotion
-        configMap:
-          name: promotion-dispatcher-000733
----
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -438,7 +349,7 @@ metadata:
     app.kubernetes.io/part-of: pertinence
     pertinence.dev/benchmark-role: loadgen
 spec:
-  # Applying manifests must not start a benchmark accidentally. Unsuspend only after calibration.
+  # Applying manifests must not start a benchmark accidentally. Unsuspend only after preflight.
   suspend: true
   parallelism: 1
   completions: 1
@@ -506,13 +417,7 @@ spec:
             - --config
             - /etc/benchmark/benchmark.yaml
             - --endpoint
-            - shufflenetv2_x0_5=http://expert-shufflenet-predictor.pertinence-serving.svc.cluster.local
-            - --endpoint
-            - mobilenetv2_x0_5=http://expert-mobilenet-predictor.pertinence-serving.svc.cluster.local
-            - --endpoint
             - resnet56=http://expert-resnet56-predictor.pertinence-serving.svc.cluster.local
-            - --endpoint
-            - static-resnet-router=http://router-static-resnet-predictor.pertinence-serving.svc.cluster.local
             - --endpoint
             - dispatcher-000733=http://router-dispatcher-000733-predictor.pertinence-serving.svc.cluster.local
             - --output

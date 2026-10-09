@@ -99,26 +99,25 @@ def _bindings(policy: dict[str, Any], name: str, violations: list[str]) -> list[
 
 
 def _expected_bucket_bindings(
-    *, bucket: str, gsa_member: str, run_set_id: str, final_id: str, c101_id: str
+    *, bucket: str, gsa_member: str, run_set_id: str, benchmark_id: str
 ) -> set[tuple[str, tuple[str, ...], str, str]]:
+    bucket_resource = f"projects/_/buckets/{bucket}"
     base = f"projects/_/buckets/{bucket}/objects/pertinence/benchmarks"
-    entries = (
-        (
-            TRACE_VIEWER_ROLE,
-            f"trace-final-{run_set_id}",
-            f"{base}/traces/cifar10-final-20260824/",
-        ),
-        (
-            TRACE_VIEWER_ROLE,
-            f"trace-c101-{run_set_id}",
-            f"{base}/traces/cifar10.1-v6/",
-        ),
-        (RUN_CREATOR_ROLE, f"run-final-{run_set_id}", f"{base}/runs/{final_id}/"),
-        (RUN_CREATOR_ROLE, f"run-c101-{run_set_id}", f"{base}/runs/{c101_id}/"),
+    trace_prefix = f"{base}/traces/cifar10-final-20260824/"
+    run_prefix = f"{base}/runs/{benchmark_id}/"
+    read_expression = (
+        f"resource.name == '{bucket_resource}' || "
+        f"resource.name.startsWith('{trace_prefix}') || "
+        f"resource.name.startsWith('{run_prefix}')"
     )
     return {
-        (role, (gsa_member,), title, f"resource.name.startsWith('{prefix}')")
-        for role, title, prefix in entries
+        (TRACE_VIEWER_ROLE, (gsa_member,), f"trace-final-{run_set_id}", read_expression),
+        (
+            RUN_CREATOR_ROLE,
+            (gsa_member,),
+            f"run-{run_set_id}",
+            f"resource.name.startsWith('{run_prefix}')",
+        ),
     }
 
 
@@ -154,8 +153,7 @@ def verify(
     bucket: str,
     gsa: str,
     run_set_id: str,
-    benchmark_id_final: str,
-    benchmark_id_c101: str,
+    benchmark_id: str,
     gsa_policy: dict[str, Any],
     bucket_policy: dict[str, Any],
     service_account_keys: list[Any],
@@ -168,15 +166,9 @@ def verify(
         violations.append("bucket is not a valid bucket name")
     if not GSA_RE.fullmatch(gsa):
         violations.append("gsa is not a valid service-account email")
-    for name, value in (
-        ("run-set-id", run_set_id),
-        ("benchmark-id-final", benchmark_id_final),
-        ("benchmark-id-c101", benchmark_id_c101),
-    ):
+    for name, value in (("run-set-id", run_set_id), ("benchmark-id", benchmark_id)):
         if not DNS_ID_RE.fullmatch(value):
             violations.append(f"{name} is not DNS-label safe")
-    if benchmark_id_final == benchmark_id_c101:
-        violations.append("benchmark IDs must differ")
 
     gsa_etag = _require_text(gsa_policy.get("etag"), "GSA policy etag", violations)
     bucket_etag = _require_text(bucket_policy.get("etag"), "bucket policy etag", violations)
@@ -225,12 +217,11 @@ def verify(
         bucket=bucket,
         gsa_member=gsa_member,
         run_set_id=run_set_id,
-        final_id=benchmark_id_final,
-        c101_id=benchmark_id_c101,
+        benchmark_id=benchmark_id,
     )
-    if len(selected) != 4 or set(selected) != expected:
+    if len(selected) != 2 or set(selected) != expected:
         violations.append(
-            "bucket policy must contain exactly the four expected conditional bindings for "
+            "bucket policy must contain exactly the two expected conditional bindings for "
             "the benchmark GSA"
         )
 
@@ -258,10 +249,7 @@ def verify(
             "gsa": gsa,
             "ksa_member": ksa_member,
             "run_set_id": run_set_id,
-            "benchmark_ids": {
-                "cifar10_final": benchmark_id_final,
-                "cifar10_1_v6": benchmark_id_c101,
-            },
+            "benchmark_id": benchmark_id,
         },
         "observed": {
             "gsa_policy_etag": gsa_etag,
@@ -289,8 +277,7 @@ def main() -> int:
     parser.add_argument("--bucket", required=True)
     parser.add_argument("--gsa", required=True)
     parser.add_argument("--run-set-id", required=True)
-    parser.add_argument("--benchmark-id-final", required=True)
-    parser.add_argument("--benchmark-id-c101", required=True)
+    parser.add_argument("--benchmark-id", required=True)
     parser.add_argument("--gsa-policy", type=Path, required=True)
     parser.add_argument("--bucket-policy", type=Path, required=True)
     parser.add_argument("--service-account-keys", type=Path, required=True)
@@ -305,8 +292,7 @@ def main() -> int:
             bucket=args.bucket,
             gsa=args.gsa,
             run_set_id=args.run_set_id,
-            benchmark_id_final=args.benchmark_id_final,
-            benchmark_id_c101=args.benchmark_id_c101,
+            benchmark_id=args.benchmark_id,
             gsa_policy=gsa_policy,
             bucket_policy=bucket_policy,
             service_account_keys=keys,

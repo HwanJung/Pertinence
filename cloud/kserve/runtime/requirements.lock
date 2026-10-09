@@ -1,7 +1,10 @@
 # Serving/benchmark dependencies intentionally independent of the CUDA development lock.
 cffi==2.1.1
+certifi==2026.7.22
+charset-normalizer==3.5.1
 cryptography==50.0.1
 google-auth==2.58.0
+idna==3.20
 numpy==1.26.4
 onnxruntime==1.20.1
 pyarrow==19.0.1
@@ -9,3 +12,5 @@ pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0
 PyYAML==6.0.2
+requests==2.33.0
+urllib3==2.7.0

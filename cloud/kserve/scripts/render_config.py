@@ -96,13 +96,7 @@ def validate_inputs(values: dict[str, str], required: set[str]) -> None:
                 config = yaml.safe_load(base64.b64decode(value, validate=True))
             except (binascii.Error, UnicodeDecodeError, yaml.YAMLError) as error:
                 raise ValueError("BENCHMARK_CONFIG_BASE64 must encode valid YAML") from error
-            expected_arms = [
-                "shufflenetv2_x0_5",
-                "mobilenetv2_x0_5",
-                "resnet56",
-                "static-resnet-router",
-                "dispatcher-000733",
-            ]
+            expected_arms = ["resnet56", "dispatcher-000733"]
             if not isinstance(config, dict) or config.get("arms") != expected_arms:
                 raise ValueError("benchmark config arms/order is not approved")
         elif key == "BENCHMARK_ID":

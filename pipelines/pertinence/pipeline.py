@@ -1,4 +1,4 @@
-"""Compile the CPU-only GCS-backed KFP DAG; cloud provisioning remains separate."""
+"""Compile the generic CPU-only, bundle-driven KFP training DAG."""
 
 import argparse
 from pathlib import Path
@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from kfp import compiler, dsl, kubernetes
 
-from .components import make_components
+from .components import make_training_components
 
 
 def _gcs_uri(value: str) -> str:
@@ -58,39 +58,25 @@ def make_pipeline(
     enable_cache: bool = False,
 ):
     pipeline_root = _gcs_uri(pipeline_root)
-    components = make_components(image, cpu_threads=cpu_threads)
+    components = make_training_components(image, cpu_threads=cpu_threads)
 
-    @dsl.pipeline(name="pertinence-cifar10-cpu", pipeline_root=pipeline_root)
+    @dsl.pipeline(name="pertinence-routing-training-cpu", pipeline_root=pipeline_root)
     def pipeline(
-        cifar10_uri: str,
-        cifar10_sha256: str,
-        shufflenet_checkpoint_uri: str,
-        shufflenet_checkpoint_sha256: str,
-        mobilenet_checkpoint_uri: str,
-        mobilenet_checkpoint_sha256: str,
-        resnet56_checkpoint_uri: str,
-        resnet56_checkpoint_sha256: str,
+        dataset_bundle_uri: str,
+        dataset_bundle_sha256: str,
+        expert_bundle_uri: str,
+        expert_bundle_sha256: str,
         run_config_uri: str,
         run_config_sha256: str,
     ):
-        cifar10 = dsl.importer(
-            artifact_uri=cifar10_uri,
+        dataset = dsl.importer(
+            artifact_uri=dataset_bundle_uri,
             artifact_class=dsl.Artifact,
             reimport=False,
         )
-        shufflenet = dsl.importer(
-            artifact_uri=shufflenet_checkpoint_uri,
-            artifact_class=dsl.Model,
-            reimport=False,
-        )
-        mobilenet = dsl.importer(
-            artifact_uri=mobilenet_checkpoint_uri,
-            artifact_class=dsl.Model,
-            reimport=False,
-        )
-        resnet56 = dsl.importer(
-            artifact_uri=resnet56_checkpoint_uri,
-            artifact_class=dsl.Model,
+        experts = dsl.importer(
+            artifact_uri=expert_bundle_uri,
+            artifact_class=dsl.Artifact,
             reimport=False,
         )
         config = dsl.importer(
@@ -98,29 +84,17 @@ def make_pipeline(
             artifact_class=dsl.Artifact,
             reimport=False,
         )
-        prepare = components["prepare"](
-            cifar10_archive=cifar10.output,
-            cifar10_sha256=cifar10_sha256,
-        )
-        export = components["export"](
-            shufflenet_checkpoint=shufflenet.output,
-            shufflenet_sha256=shufflenet_checkpoint_sha256,
-            mobilenet_checkpoint=mobilenet.output,
-            mobilenet_sha256=mobilenet_checkpoint_sha256,
-            resnet56_checkpoint=resnet56.output,
-            resnet56_sha256=resnet56_checkpoint_sha256,
-        )
         validate = components["validate"](
-            dataset_bundle=prepare.outputs["dataset_bundle"],
-            expert_bundle=export.outputs["expert_bundle"],
+            dataset_bundle=dataset.output,
+            expert_bundle=experts.output,
             run_config=config.output,
-            dataset_sha256=prepare.outputs["dataset_bundle_sha256"],
-            expert_sha256=export.outputs["expert_bundle_sha256"],
+            dataset_sha256=dataset_bundle_sha256,
+            expert_sha256=expert_bundle_sha256,
             config_sha256=run_config_sha256,
         )
         build = components["build"](
-            dataset_bundle=prepare.outputs["dataset_bundle"],
-            expert_bundle=export.outputs["expert_bundle"],
+            dataset_bundle=dataset.output,
+            expert_bundle=experts.output,
             normalized_contract=validate.outputs["normalized_contract"],
             split_manifest=validate.outputs["split_manifest"],
         )
@@ -139,28 +113,18 @@ def make_pipeline(
             evaluated_bundle=evaluate.outputs["evaluated_bundle"]
         )
 
-        for task in (
-            prepare,
-            export,
-            validate,
-            build,
-            train,
-            evaluate,
-            register,
-        ):
+        for task in (validate, build, train, evaluate, register):
             _schedule_on_pipeline_pool(task)
 
-        _resources(prepare, cpu="2", memory="4Gi")
-        _resources(export, cpu=str(cpu_threads), memory="8Gi")
         _resources(validate, cpu=str(cpu_threads), memory="6Gi")
         _resources(build, cpu=str(cpu_threads), memory="12Gi")
         _resources(train, cpu=str(cpu_threads), memory="8Gi")
         kubernetes.set_timeout(train, seconds=train_timeout_seconds)
         _resources(evaluate, cpu="2", memory="4Gi")
         _resources(register, cpu="1", memory="2Gi")
-        for task in (prepare, export, validate, build, train, evaluate):
+        for task in (validate, build, train, evaluate):
             task.set_caching_options(enable_cache)
-        for task in (prepare, export, validate, build, evaluate, register):
+        for task in (validate, build, evaluate, register):
             task.set_retry(1)
         train.set_retry(0)
         register.set_caching_options(False)

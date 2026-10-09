@@ -25,6 +25,8 @@ def validate_benchmark_config(value: Mapping[str, object]) -> None:
         raise ValueError("benchmark config must be schema v1 low-load mode")
     if value.get("arms") != list(APPROVED_ARMS):
         raise ValueError("benchmark config arms/order is not approved")
+    if "target" in value:
+        raise ValueError("benchmark config must declare the approved arms, not a target")
     request = value.get("request")
     if not isinstance(request, Mapping) or any(
         request.get(key) != expected
@@ -37,19 +39,21 @@ def validate_benchmark_config(value: Mapping[str, object]) -> None:
         )
     ):
         raise ValueError("benchmark request policy differs from the approved serialized policy")
-    calibration = value.get("calibration")
+    warmup = value.get("warmup")
     steady = value.get("steady_state")
     if (
-        not isinstance(calibration, Mapping)
-        or calibration.get("warmup_requests_per_arm") != 200
-        or calibration.get("measured_requests_per_arm") != 200
+        not isinstance(warmup, Mapping)
+        or warmup.get("requests_per_arm") != 200
+        or warmup.get("distinct_samples") is not True
         or not isinstance(steady, Mapping)
-        or steady.get("repeats") != 5
-        or steady.get("order") != "cyclic_latin_square"
-        or steady.get("requests_per_dataset_arm_repeat") != 2_000
+        or "repeats" in steady
+        or steady.get("order") != "single_pass"
+        or steady.get("arm_order") != list(APPROVED_ARMS)
+        or steady.get("requests_per_arm") != 2_000
+        or steady.get("fixed_rps") != 2
         or steady.get("queue_on_missed_schedule") is not False
     ):
-        raise ValueError("benchmark calibration or steady-state policy differs")
+        raise ValueError("benchmark warm-up or single-pass policy differs")
 
 
 class Predictor(Protocol):
@@ -161,6 +165,7 @@ class RequestRecord:
     completed_ns: int
     latency_ns: int
     prediction: int
+    logits: list[float]
     correct: bool
     route: int | None
     identity: Mapping[str, str]
@@ -172,36 +177,7 @@ class RequestRecord:
         return asdict(self)
 
 
-def p95_latency_seconds(latencies_seconds: Sequence[float]) -> float:
-    values = np.asarray(latencies_seconds, dtype=np.float64)
-    if values.ndim != 1 or values.size == 0 or not np.isfinite(values).all():
-        raise ValueError("latencies must be a non-empty finite vector")
-    if np.any(values <= 0.0):
-        raise ValueError("latencies must be positive")
-    return float(np.quantile(values, 0.95, method="linear"))
-
-
-def common_request_rate(calibration: Mapping[str, Sequence[float]]) -> float:
-    """Compute min(2 RPS, 10% of the slowest arm's p95-derived capacity)."""
-
-    if not calibration:
-        raise ValueError("at least one calibration arm is required")
-    slowest_p95 = max(p95_latency_seconds(values) for values in calibration.values())
-    return min(2.0, 0.1 / slowest_p95)
-
-
-def latin_square(arms: Sequence[str], repeats: int = 5) -> tuple[tuple[str, ...], ...]:
-    """Return a deterministic cyclic Latin square; five arms/repeats are production defaults."""
-
-    values = tuple(arms)
-    if not values or len(set(values)) != len(values):
-        raise ValueError("arms must be non-empty and unique")
-    if repeats < 1 or repeats > len(values):
-        raise ValueError("repeats must be between one and the arm count")
-    return tuple(values[offset:] + values[:offset] for offset in range(repeats))
-
-
-def _validate_prediction(result: Mapping[str, object]) -> tuple[int, int | None]:
+def _validate_prediction(result: Mapping[str, object]) -> tuple[int, int | None, list[float]]:
     logits = np.asarray(result.get("logits"), dtype=np.float32)
     if logits.shape != (1, 10) or not np.isfinite(logits).all():
         raise ValueError("predictor returned invalid logits")
@@ -209,32 +185,36 @@ def _validate_prediction(result: Mapping[str, object]) -> tuple[int, int | None]
     route = None if raw_route is None else int(raw_route)
     if route is not None and route not in (0, 1, 2):
         raise ValueError("predictor returned invalid route")
-    return int(np.argmax(logits[0])), route
+    return int(np.argmax(logits[0])), route, logits[0].tolist()
 
 
-def calibrate(
-    predictors: Mapping[str, Predictor],
-    image: np.ndarray,
+def warm_up_arm(
     *,
-    warmup_requests: int = 200,
-    measured_requests: int = 200,
-    clock_ns: Callable[[], int] = time.perf_counter_ns,
-) -> tuple[dict[str, list[float]], float]:
-    """Warm each endpoint and measure serial request latency without retrying."""
+    images: np.ndarray,
+    predict: Predictor,
+    expected_identity: Mapping[str, str],
+    requests: int = 200,
+) -> str | None:
+    """Warm an endpoint with distinct samples; no warm-up observation is returned."""
 
-    if warmup_requests < 0 or measured_requests < 1:
-        raise ValueError("invalid calibration request counts")
-    measurements: dict[str, list[float]] = {}
-    for arm, predict in predictors.items():
-        for _ in range(warmup_requests):
-            _validate_prediction(predict(image))
-        latencies = []
-        for _ in range(measured_requests):
-            started = clock_ns()
-            _validate_prediction(predict(image))
-            latencies.append((clock_ns() - started) / 1_000_000_000.0)
-        measurements[arm] = latencies
-    return measurements, common_request_rate(measurements)
+    values = np.asarray(images)
+    if values.ndim != 4 or values.shape[1:] != (3, 32, 32) or values.dtype != np.float32:
+        raise ValueError("images must be float32 [N,3,32,32]")
+    if requests < 1 or requests > len(values):
+        raise ValueError("warm-up requests must fit the distinct input samples")
+    for index, image in enumerate(values[:requests]):
+        try:
+            result = predict(image[np.newaxis, ...])
+            _validate_prediction(result)
+            identity = {
+                str(key): str(value)
+                for key, value in dict(result.get("identity", {})).items()
+            }
+            if any(identity.get(key) != value for key, value in expected_identity.items()):
+                return f"identity_mismatch:sample={index}"
+        except Exception as error:
+            return f"request_error:sample={index}:{type(error).__name__}:{error}"
+    return None
 
 
 def run_scheduled_arm(
@@ -275,7 +255,7 @@ def run_scheduled_arm(
         started = clock_ns()
         try:
             result = predict(image[np.newaxis, ...])
-            prediction, route = _validate_prediction(result)
+            prediction, route, logits = _validate_prediction(result)
             identity = {str(key): str(value) for key, value in dict(result.get("identity", {})).items()}
             if expected_identity is not None and any(
                 identity.get(key) != value for key, value in expected_identity.items()
@@ -298,6 +278,7 @@ def run_scheduled_arm(
                     completed_ns=completed,
                     latency_ns=completed - started,
                     prediction=prediction,
+                    logits=logits,
                     correct=prediction == int(label),
                     route=route,
                     identity=identity,

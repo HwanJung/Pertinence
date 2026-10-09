@@ -1,13 +1,15 @@
 # 실제 GKE·KFP 아키텍처
 
-> 기준일: 2026-09-20
-> 근거: production KFP run, read-only GKE/Kubernetes inventory, Terraform remote-state adoption
+> 기준일: 2026-10-02
+> 근거: 2026-09-20 production KFP run, current generic IR tests, read-only GKE/Kubernetes inventory
 
 ## 범위와 상태
 
-현행 cloud 구성은 zonal GKE Standard cluster에서 CIFAR-10 dispatcher를 CPU로 학습·평가하는
-single-user OSS KFP 환경이다. 일곱 container component와 GCS artifact, immutable image digest,
-node-pool scheduling, final 평가와 run-scoped SQLite registration까지 실제 실행으로 검증했다.
+현행 cloud 구성은 zonal GKE Standard cluster에서 Bundle v1 image-classification dispatcher를
+CPU로 학습·평가하는 single-user OSS KFP 환경이다. 기본 compiler는 prebuilt DatasetBundle,
+ExpertBundle과 RunConfig를 받는 다섯 container component를 생성한다. 2026-09-20 production run은
+보존된 일곱 component CIFAR-10 legacy 경로로 검증했으며 generic 경로의 GKE smoke는 별도 완료
+gate로 남는다.
 
 다음 항목은 현행 아키텍처에 없다.
 
@@ -21,8 +23,8 @@ node-pool scheduling, final 평가와 run-scoped SQLite registration까지 실�
 
 저장소의 serving runtime, KServe manifest와 현재 cluster용 Terraform benchmark profile은 실행
 준비 자산이다. 실제 cluster 배포와 성공 benchmark evidence가 없으면 이 문서의 현행 미배포 상태를
-바꾸지 않는다. 실행 전후 gate와 기록 기준은
-[KServe benchmark runbook](kserve-benchmark-runbook.ko.md)을 따른다.
+바꾸지 않는다. 실행 전후 gate, 진행 상태와 종료 기준은
+[benchmark Plan](benchmark/Plan.md)과 [Progress](benchmark/Progress.md)를 따른다.
 
 ## 시스템 컨텍스트
 
@@ -30,14 +32,14 @@ node-pool scheduling, final 평가와 run-scoped SQLite registration까지 실�
 operator workstation
   ├─ Terraform/gcloud/kubectl ───────────────► GKE control plane
   ├─ Cloud Build ─► Artifact Registry ───────► component image pull
-  ├─ immutable raw input + SHA-256 ──────────► Raw GCS bucket
+  ├─ immutable Bundle/RunConfig + SHA-256 ───► Input GCS bucket
   └─ KFP SDK over local port-forward ────────► KFP API
 
 GKE: pertinence-dispatcher-260919-1708
   system-pool
     └─ KFP API/UI, Argo, MLMD, MySQL, SeaweedFS, importer/driver Pods
   pipeline-pool (0–1)
-    └─ seven PERTINENCE container executors
+    └─ five generic or seven legacy PERTINENCE container executors
 
 KFP launcher ────────────────────────────────► Run GCS bucket
 ```
@@ -51,7 +53,7 @@ KFP API metadata와 task artifact 저장 위치는 다르다. `defaultPipelineRo
 | Pool | Machine/disk | Scaling | Taint | 실제 역할 |
 |---|---|---|---|---|
 | `system-pool` | `e2-standard-4`, `pd-standard` 50 GiB | 고정 1 | 없음 | KFP system, importer/driver |
-| `pipeline-pool` | `n2-standard-8`, `pd-standard` 50 GiB | 0–1 | `workload=pertinence-pipeline:NoSchedule` | 일곱 executor |
+| `pipeline-pool` | `n2-standard-8`, `pd-standard` 50 GiB | 0–1 | `workload=pertinence-pipeline:NoSchedule` | generic 5개 또는 legacy 7개 executor |
 
 Cluster는 `asia-northeast3-a`의 VPC-native Standard cluster이고 Regular release channel과
 Workload Identity Federation을 사용한다. 2026-09-20 확인 버전은 control plane/node 모두
@@ -76,18 +78,17 @@ driver/root와 importer Pod는 `system-pool`에서 실행될 수 있다. Cache-h
 
 ## KFP pipeline
 
-Production IR은 외부 GCS artifact를 등록하는 importer 5개와 container executor 7개로 구성된다.
+기본 production IR은 외부 GCS artifact를 등록하는 importer 3개와 container executor 5개로
+구성된다.
 
 ```text
-prepare-dataset-bundle ─┐
-export-expert-bundle ───┴─ validate-run ─ build-routing-dataset
-  ─ train-dispatcher ─ evaluate-final ─ register-dispatchers
+DatasetBundle ─┐
+ExpertBundle ──┼─ validate-run ─ build-routing-dataset
+RunConfig ─────┘    ─ train-dispatcher ─ evaluate-final ─ register-dispatchers
 ```
 
 | Component | 핵심 출력 | Resource request/limit |
 |---|---|---|
-| `prepare-dataset-bundle` | `DatasetBundle` | 2 CPU / 4 GiB |
-| `export-expert-bundle` | `ExpertBundle` | 4 CPU / 8 GiB |
 | `validate-run` | normalized contract, split | 4 CPU / 6 GiB |
 | `build-routing-dataset` | train/search/final cache | 4 CPU / 12 GiB |
 | `train-dispatcher` | search result, Pareto checkpoints | 4 CPU / 8 GiB |
@@ -98,14 +99,19 @@ Search input에는 final cache가 없다. Final은 search가 보존한 checkpoin
 복원하며 final metric으로 제거하거나 재선정하지 않는다. Registration은 batch transaction과
 idempotency key를 사용하지만 DB는 run artifact이지 중앙 Registry가 아니다.
 
+기존 raw CIFAR-10 archive와 checkpoint부터 시작하는 `pertinence-cifar10-cpu` IR은 importer 5개와
+container executor 7개를 그대로 유지한다. 이 legacy compiler는 bootstrap component 두 개의
+출력을 같은 공용 다섯 component에 연결한다.
+
 모든 component image는 `linux/amd64` manifest digest로 고정한다. Mutable tag는 compile 단계에서
 거부한다. Production 기본값은 task cache off이고 registration cache는 항상 off다. Immutable input
 URI+SHA와 image digest가 유지되는 실패 복구에서만 compile/submit 양쪽에 cache를 켠다.
 
 ## Artifact와 lineage
 
-Pipeline의 외부 입력은 CIFAR-10 archive, expert checkpoint 3개와 RunConfig이며 URI와 SHA-256을
-쌍으로 전달한다. Component는 다음 세 층을 독립적으로 검증한다.
+범용 pipeline의 외부 입력은 DatasetBundle, ExpertBundle과 RunConfig이며 각각 URI와 SHA-256을
+쌍으로 전달한다. Bundle URI는 manifest가 바로 아래에 있는 content-addressed GCS prefix다.
+Component는 다음 세 층을 독립적으로 검증한다.
 
 1. 객체 byte SHA-256: 전송 또는 동일 URI overwrite 감지;
 2. PERTINENCE fingerprint: contract, split, expert order와 runtime identity 검증;
@@ -140,7 +146,8 @@ Cluster deletion protection과 node-pool `PREVENT` policy를 유지한다. 상�
 
 ## 검증된 경계
 
-Production run에서 다음을 확인했다.
+2026-09-20 CIFAR-10 legacy production run에서 다음을 확인했다. 이 수치는 generic IR의 GKE 검증을
+의미하지 않는다.
 
 - executor 7개는 `pipeline-pool`, importer/driver 13개는 `system-pool`에 배치;
 - pipeline pool의 0→1→0 autoscaling;

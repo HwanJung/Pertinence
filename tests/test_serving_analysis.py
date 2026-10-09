@@ -5,52 +5,277 @@ import json
 
 import pytest
 
-from pertinence.serving.analysis import analyze_records, derive_validity
+from pertinence.serving.analysis import (
+    analyze_records,
+    derive_validity,
+    request_matrix_inventory,
+    summarize_arm_counters,
+)
 from pertinence.serving.benchmark import APPROVED_ARMS
 from pertinence.serving.contracts import seal_manifest
 from pertinence.serving_cli import _run_benchmark, _write_benchmark_failure
 
 
-def _records() -> list[dict[str, object]]:
-    result = []
-    predictions = {
-        "static-resnet-router": [0, 0, 1, 1],
-        "dispatcher-000733": [0, 1, 1, 1],
-    }
-    labels = [0, 1, 1, 0]
-    for arm, values in predictions.items():
-        for repeat in range(2):
-            for sample, prediction in enumerate(values):
-                result.append(
-                    {
-                        "arm": arm,
-                        "repeat": repeat,
-                        "sample_index": sample,
-                        "latency_ns": 1_000_000 + sample * 10_000,
-                        "prediction": prediction,
-                        "correct": prediction == labels[sample],
-                        "route": 2,
-                    }
-                )
+def _records(samples: int = 2_000) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    expected_correct = {"resnet56": 1892, "dispatcher-000733": 1893}
+    for arm_index, arm in enumerate(APPROVED_ARMS):
+        for sample in range(samples):
+            latency_ns = (arm_index + 1) * 1_000_000 + sample
+            started_ns = sample * 500_000_000
+            route = None
+            if arm == "dispatcher-000733":
+                route = 1 if sample < 640 else 2
+            result.append(
+                {
+                    "dataset_id": "cifar10-final-20260824",
+                    "arm": arm,
+                    "repeat": 0,
+                    "sample_index": sample,
+                    "sample_id": f"sample-{sample}",
+                    "started_ns": started_ns,
+                    "completed_ns": started_ns + latency_ns,
+                    "latency_ns": latency_ns,
+                    "process_cpu_ns": 500_000,
+                    "prediction": 0,
+                    "correct": sample < expected_correct[arm],
+                    "route": route,
+                    "stage_latency_ns": {},
+                }
+            )
     return result
 
 
-def test_analysis_uses_unique_accuracy_and_paired_hierarchical_performance() -> None:
-    summary = analyze_records(
-        _records(), expected_repeats=2, expected_samples=4, bootstrap_samples=100
+def test_analysis_reports_accuracy_latency_delta_ratio_and_routes() -> None:
+    summary = analyze_records(_records())
+
+    assert summary["effect_policy"] == "two-arm-single-pass-descriptive-only"
+    assert summary["accuracy"]["arms"]["resnet56"]["correct"] == 1892
+    assert summary["accuracy"]["arms"]["dispatcher-000733"]["correct"] == 1893
+    assert summary["accuracy"]["dispatcher_minus_resnet56_percentage_points"] == pytest.approx(
+        0.05
+    )
+    assert summary["accuracy"]["dispatcher_route_counts"] == [0, 640, 1360]
+    assert summary["offline_expected_matches"] is True
+    latency = summary["performance"]["latency_comparison"]
+    assert latency["mean"]["absolute_difference_ms"] == pytest.approx(1.0)
+    assert latency["p95"]["ratio"] > 1.9
+
+
+@pytest.mark.parametrize("mutation", ("missing", "duplicate", "wrong-arm"))
+def test_request_matrix_rejects_missing_duplicate_or_wrong_arm(mutation: str) -> None:
+    records = _records(samples=2)
+    if mutation == "missing":
+        records.pop()
+    elif mutation == "duplicate":
+        records.append(dict(records[-1]))
+    else:
+        records[-1]["arm"] = "mobilenetv2_x0_5"
+
+    inventory = request_matrix_inventory(records, arms=APPROVED_ARMS, repeats=1, samples=2)
+
+    assert inventory["complete"] is False
+
+
+def _metric(name: str, pod: str, value: float) -> str:
+    return f'{name}{{pod="{pod}"}} {value}'
+
+
+def _pod_metrics(pod: str, *, cpu: float, memory: float) -> list[str]:
+    return [
+        _metric("container_cpu_usage_seconds_total", pod, cpu),
+        _metric("container_memory_working_set_bytes", pod, memory),
+        _metric("container_cpu_cfs_throttled_seconds_total", pod, cpu / 100),
+        _metric("container_cpu_cfs_throttled_periods_total", pod, cpu),
+        _metric("container_cpu_cfs_periods_total", pod, cpu * 10),
+    ]
+
+
+def test_resource_summary_sums_dispatcher_pods_and_memory_at_each_timestamp() -> None:
+    resnet = "expert-resnet56-predictor-a"
+    dispatcher_pods = [
+        "router-dispatcher-000733-predictor-a",
+        "expert-shufflenet-predictor-a",
+        "expert-mobilenet-predictor-a",
+        resnet,
+    ]
+    evidence = [
+        {"timestamp_ns": 0, "metrics": _pod_metrics(resnet, cpu=1, memory=50)},
+        {"timestamp_ns": 10, "metrics": _pod_metrics(resnet, cpu=3, memory=60)},
+        {
+            "timestamp_ns": 20,
+            "metrics": sum(
+                (
+                    _pod_metrics(pod, cpu=10 + index, memory=10 * (index + 1))
+                    for index, pod in enumerate(dispatcher_pods)
+                ),
+                [],
+            ),
+        },
+        {
+            "timestamp_ns": 30,
+            "metrics": sum(
+                (
+                    _pod_metrics(pod, cpu=11 + index, memory=20 + 10 * index)
+                    for index, pod in enumerate(dispatcher_pods)
+                ),
+                [],
+            ),
+        },
+    ]
+    pod_inventory = [
+        {"name": pod, "uid": f"uid-{index}", "restart_count": 0}
+        for index, pod in enumerate(dispatcher_pods)
+    ]
+    for item in evidence:
+        item["pods"] = pod_inventory
+    markers = [
+        {"event": "arm_start", "arm": "resnet56", "repeat": 0, "timestamp_ns": 0},
+        {"event": "arm_end", "arm": "resnet56", "repeat": 0, "timestamp_ns": 10},
+        {
+            "event": "arm_start",
+            "arm": "dispatcher-000733",
+            "repeat": 0,
+            "timestamp_ns": 20,
+        },
+        {
+            "event": "arm_end",
+            "arm": "dispatcher-000733",
+            "repeat": 0,
+            "timestamp_ns": 30,
+        },
+    ]
+    requests = [
+        {"arm": "resnet56", "process_cpu_ns": 1},
+        {"arm": "dispatcher-000733", "process_cpu_ns": 1},
+    ]
+
+    summary = summarize_arm_counters(evidence, markers, requests)
+
+    assert summary["arms"]["resnet56"]["cpu_seconds"] == pytest.approx(2)
+    dispatcher = summary["arms"]["dispatcher-000733"]
+    assert dispatcher["cpu_seconds"] == pytest.approx(4)
+    assert dispatcher["memory_working_set_average_bytes"] == pytest.approx(120)
+    assert dispatcher["memory_working_set_peak_bytes"] == 140
+    assert len(dispatcher["pods"]) == 4
+    assert dispatcher["kubernetes_resources"]["cpu_requests_cores"] == 4
+    assert summary["pod_identity_stable"] is True
+    assert summary["pod_restart_delta"] == 0
+
+
+def test_resource_summary_accepts_prometheus_sample_timestamps() -> None:
+    resnet = "expert-resnet56-predictor-a"
+    dispatcher_pods = [
+        "router-dispatcher-000733-predictor-a",
+        "expert-shufflenet-predictor-a",
+        "expert-mobilenet-predictor-a",
+        resnet,
+    ]
+    evidence = []
+    for timestamp, pods in (
+        (0, [resnet]),
+        (10, [resnet]),
+        (20, dispatcher_pods),
+        (30, dispatcher_pods),
+    ):
+        metrics = sum(
+            (
+                _pod_metrics(pod, cpu=timestamp + index + 1, memory=100 + index)
+                for index, pod in enumerate(pods)
+            ),
+            [],
+        )
+        evidence.append(
+            {
+                "timestamp_ns": timestamp,
+                "metrics": [f"{metric} {1790093923000 + timestamp}" for metric in metrics],
+                "pods": [
+                    {"name": pod, "uid": f"uid-{index}", "restart_count": 0}
+                    for index, pod in enumerate(dispatcher_pods)
+                ],
+            }
+        )
+    markers = [
+        {"event": "arm_start", "arm": "resnet56", "repeat": 0, "timestamp_ns": 0},
+        {"event": "arm_end", "arm": "resnet56", "repeat": 0, "timestamp_ns": 10},
+        {
+            "event": "arm_start",
+            "arm": "dispatcher-000733",
+            "repeat": 0,
+            "timestamp_ns": 20,
+        },
+        {
+            "event": "arm_end",
+            "arm": "dispatcher-000733",
+            "repeat": 0,
+            "timestamp_ns": 30,
+        },
+    ]
+
+    summary = summarize_arm_counters(
+        evidence,
+        markers,
+        [{"arm": "resnet56"}, {"arm": "dispatcher-000733"}],
     )
 
-    assert summary["effect_policy"].startswith("descriptive-only")
-    comparison = summary["comparison"]
-    assert comparison["accuracy"]["delta_right_minus_left"] == pytest.approx(0.25)
-    assert comparison["latency_ms"]["p95"]["delta_right_minus_left"] == pytest.approx(0.0)
+    assert summary["arms"]["resnet56"]["cpu_seconds"] == pytest.approx(10)
+    assert summary["arms"]["dispatcher-000733"]["cpu_seconds"] == pytest.approx(40)
 
 
-def test_analysis_rejects_incomplete_run() -> None:
-    records = _records()
-    records.pop()
-    with pytest.raises(ValueError, match="incomplete"):
-        analyze_records(records, expected_repeats=2, expected_samples=4, bootstrap_samples=10)
+def test_resource_summary_detects_serving_pod_restart() -> None:
+    pod_names = [
+        "router-dispatcher-000733-predictor-a",
+        "expert-shufflenet-predictor-a",
+        "expert-mobilenet-predictor-a",
+        "expert-resnet56-predictor-a",
+    ]
+    evidence = []
+    for timestamp, restart_count in ((0, 0), (10, 0), (20, 0), (30, 1)):
+        evidence.append(
+            {
+                "timestamp_ns": timestamp,
+                "metrics": sum(
+                    (
+                        _pod_metrics(pod, cpu=timestamp + index + 1, memory=100)
+                        for index, pod in enumerate(pod_names)
+                    ),
+                    [],
+                ),
+                "pods": [
+                    {
+                        "name": pod,
+                        "uid": f"uid-{index}",
+                        "restart_count": restart_count if index == 0 else 0,
+                    }
+                    for index, pod in enumerate(pod_names)
+                ],
+            }
+        )
+    markers = [
+        {"event": "arm_start", "arm": "resnet56", "repeat": 0, "timestamp_ns": 0},
+        {"event": "arm_end", "arm": "resnet56", "repeat": 0, "timestamp_ns": 10},
+        {
+            "event": "arm_start",
+            "arm": "dispatcher-000733",
+            "repeat": 0,
+            "timestamp_ns": 20,
+        },
+        {
+            "event": "arm_end",
+            "arm": "dispatcher-000733",
+            "repeat": 0,
+            "timestamp_ns": 30,
+        },
+    ]
+
+    summary = summarize_arm_counters(
+        evidence,
+        markers,
+        [{"arm": "resnet56"}, {"arm": "dispatcher-000733"}],
+    )
+
+    assert summary["pod_identity_stable"] is True
+    assert summary["pod_restart_delta"] == 1
 
 
 def test_validity_is_derived_and_ignores_external_valid_true() -> None:
@@ -84,7 +309,7 @@ def test_analyze_refuses_to_overwrite_output(tmp_path) -> None:
 def test_invalid_sealed_analysis_omits_numeric_effects(tmp_path) -> None:
     records = tmp_path / "requests.jsonl"
     records.write_text(
-        "".join(json.dumps(item) + "\n" for item in _records()), encoding="utf-8"
+        "".join(json.dumps(item) + "\n" for item in _records(samples=4)), encoding="utf-8"
     )
     run = seal_manifest(
         {
@@ -93,11 +318,9 @@ def test_invalid_sealed_analysis_omits_numeric_effects(tmp_path) -> None:
             "promotion_fingerprint": "a" * 64,
             "trace_fingerprints": {"cifar10-final-20260824": "b" * 64},
             "arms": list(APPROVED_ARMS),
-            "warmup_requests": 1,
-            "calibration_requests": 1,
-            "requests_per_repeat": 4,
-            "repeats": 2,
-            "target_rps": 1.0,
+            "warmup_requests": 200,
+            "requests_per_arm": 4,
+            "target_rps": 2.0,
             "concurrency": 1,
             "seed": 73,
             "created_at": "2026-09-21T00:00:00Z",
@@ -124,12 +347,7 @@ def test_invalid_sealed_analysis_omits_numeric_effects(tmp_path) -> None:
             serving_action="benchmark-analyze",
             records=records,
             output=output,
-            baseline_arm="static-resnet-router",
-            comparison_arm="dispatcher-000733",
-            repeats=2,
             samples=4,
-            seed=73,
-            bootstrap_samples=20,
             run_manifest=run_path,
             environment_manifest=environment_path,
         )
@@ -157,4 +375,3 @@ def test_benchmark_failure_receipt_inventories_existing_evidence(tmp_path) -> No
         "markers.jsonl",
         "validity.json",
     }
-    assert json.loads((output / "loadgen-complete.json").read_text())["complete"] is False

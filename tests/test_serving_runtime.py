@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -9,6 +11,7 @@ from pertinence.serving import (
     StaticRouter,
     load_dispatcher_npz,
 )
+from pertinence.serving_cli import _verified_model_path, _wait_for_modelcar
 
 
 class Client:
@@ -135,3 +138,36 @@ def test_router_cpu_includes_router_and_upstream_cpu() -> None:
     response = dynamic.infer(image())
     assert response["parameters"]["upstream_cpu_seconds"] == pytest.approx(0.75)
     assert response["parameters"]["process_cpu_seconds"] >= 0.75
+
+
+def test_wait_for_modelcar_retries_until_loader_is_ready() -> None:
+    attempts = 0
+
+    def load() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ValueError("copy in progress")
+        return "ready"
+
+    assert _wait_for_modelcar(load, timeout_seconds=1, poll_seconds=0.001) == "ready"
+    assert attempts == 3
+
+
+def test_wait_for_modelcar_times_out_with_original_failure() -> None:
+    def missing() -> str:
+        raise FileNotFoundError("not copied")
+
+    with pytest.raises(TimeoutError, match="startup timeout") as caught:
+        _wait_for_modelcar(missing, timeout_seconds=0, poll_seconds=0.001)
+
+    assert isinstance(caught.value.__cause__, FileNotFoundError)
+
+
+def test_verified_model_path_requires_promoted_bytes(tmp_path) -> None:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"complete")
+
+    assert _verified_model_path(model, hashlib.sha256(b"complete").hexdigest()) == model
+    with pytest.raises(ValueError, match="SHA-256"):
+        _verified_model_path(model, "0" * 64)

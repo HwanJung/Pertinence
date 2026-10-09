@@ -44,7 +44,7 @@ def promotion(**updates):
             {"id": "resnet", "model_sha256": SHA_C, "modelcar_image": f"registry/r@sha256:{SHA_C}"},
         ],
         "runtime_image": f"registry/runtime@sha256:{SHA_A}",
-        "approved_by": "release-owner",
+        "approved_by": "reviewer@example.com",
         "approved_at": "2026-09-20T12:34:56Z",
     }
     value.update(updates)
@@ -80,6 +80,7 @@ def test_promotion_conflict_never_replaces_existing_file(tmp_path) -> None:
         (lambda body: body["dispatcher"].update(feature_dim=1000), "feature_dim"),
         (lambda body: body["dispatcher"].update(checkpoint_sha256=SHA_A), "approved checkpoint"),
         (lambda body: body.update(runtime_image="registry/runtime:latest"), "pinned"),
+        (lambda body: body.update(approved_by=""), "non-empty identity"),
         (lambda body: body["experts"][0].update(model_sha256="ABC"), "SHA-256"),
     ],
 )

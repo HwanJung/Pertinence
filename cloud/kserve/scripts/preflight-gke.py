@@ -23,6 +23,40 @@ def write_once(path: Path, text: str) -> None:
         stream.write(text)
 
 
+def quota_violations(values: dict[str, str]) -> list[str]:
+    violations: list[str] = []
+    quotas = json.loads(values["quota.json"]).get("quotas", [])
+    cpu_quota = next((item for item in quotas if item.get("metric") == "CPUS"), None)
+    if not cpu_quota or cpu_quota.get("limit", 0) - cpu_quota.get("usage", 0) < 12:
+        violations.append("regional CPU quota has less than 12 vCPUs available")
+    n2_quota = next((item for item in quotas if item.get("metric") == "N2_CPUS"), None)
+    if not n2_quota or n2_quota.get("limit", 0) - n2_quota.get("usage", 0) < 12:
+        violations.append("regional N2 CPU quota has less than 12 vCPUs available")
+    global_quotas = json.loads(values["global-quota.json"]).get("quotas", [])
+    all_regions_cpu_quota = next(
+        (item for item in global_quotas if item.get("metric") == "CPUS_ALL_REGIONS"),
+        None,
+    )
+    if (
+        not all_regions_cpu_quota
+        or all_regions_cpu_quota.get("limit", 0) - all_regions_cpu_quota.get("usage", 0) < 12
+    ):
+        violations.append("all-regions CPU quota has less than 12 vCPUs available")
+    return violations
+
+
+def write_receipt(output: Path, values: dict[str, str], violations: list[str]) -> None:
+    receipt = {
+        "schema_version": 1,
+        "valid": not violations,
+        "invalid_reasons": violations,
+        "files": {
+            name: hashlib.sha256(value.encode()).hexdigest() for name, value in sorted(values.items())
+        },
+    }
+    write_once(output / "receipt.json", json.dumps(receipt, sort_keys=True, indent=2) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--context", required=True)
@@ -34,10 +68,21 @@ def main() -> int:
     parser.add_argument("--principal", required=True)
     parser.add_argument("--node-service-account", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--quota-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, mode=0o700, exist_ok=False)
     kubectl = ["kubectl", "--context", args.context]
-    commands = {
+    quota_commands = {
+        "quota.json": [
+            "gcloud", "compute", "regions", "describe", args.region,
+            "--project", args.project, "--format=json(quotas)",
+        ],
+        "global-quota.json": [
+            "gcloud", "compute", "project-info", "describe",
+            "--project", args.project, "--format=json(quotas)",
+        ],
+    }
+    commands = quota_commands if args.quota_only else {
         "context.txt": ["kubectl", "config", "current-context"],
         "principal.txt": [
             "gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"
@@ -51,10 +96,7 @@ def main() -> int:
             "gcloud", "container", "node-pools", "list", "--cluster", args.cluster,
             "--project", args.project, "--zone", args.zone, "--format=json",
         ],
-        "quota.json": [
-            "gcloud", "compute", "regions", "describe", args.region,
-            "--project", args.project, "--format=json(quotas)",
-        ],
+        **quota_commands,
         "kubernetes-version.json": [*kubectl, "version", "-o", "json"],
         "nodes.json": [*kubectl, "get", "nodes", "-o", "json"],
         "kfp-namespace.json": [*kubectl, "get", "namespace", "kubeflow", "-o", "json"],
@@ -98,6 +140,12 @@ def main() -> int:
     for filename, command in commands.items():
         values[filename] = run(command)
         write_once(args.output / filename, values[filename])
+    if args.quota_only:
+        violations = quota_violations(values)
+        write_receipt(args.output, values, violations)
+        if violations:
+            parser.error("; ".join(violations))
+        return 0
     gateway_resources = run(
         [*kubectl, "api-resources", "--api-group=gateway.networking.k8s.io", "-o", "name"]
     )
@@ -117,7 +165,7 @@ def main() -> int:
     else:
         values["gateways.json"] = '{"items":[]}\n'
     write_once(args.output / "gateways.json", values["gateways.json"])
-    violations = []
+    violations = quota_violations(values)
     if values["context.txt"].strip() != args.context:
         violations.append("unexpected Kubernetes context")
     canonical_context = f"gke_{args.project}_{args.zone}_{args.cluster}"
@@ -156,13 +204,6 @@ def main() -> int:
         ):
             violations.append("Kubernetes node/control-plane version skew is incompatible")
             break
-    quotas = json.loads(values["quota.json"]).get("quotas", [])
-    cpu_quota = next((item for item in quotas if item.get("metric") == "CPUS"), None)
-    if not cpu_quota or cpu_quota.get("limit", 0) - cpu_quota.get("usage", 0) < 12:
-        violations.append("regional CPU quota has less than 12 vCPUs available")
-    n2_quota = next((item for item in quotas if item.get("metric") == "N2_CPUS"), None)
-    if not n2_quota or n2_quota.get("limit", 0) - n2_quota.get("usage", 0) < 12:
-        violations.append("regional N2 CPU quota has less than 12 vCPUs available")
     if json.loads(values["kfp-namespace.json"]).get("status", {}).get("phase") != "Active":
         violations.append("kubeflow namespace is not Active")
     pvcs = json.loads(values["pvcs.json"]).get("items", [])
@@ -220,15 +261,7 @@ def main() -> int:
         violations.append("Gateway exists")
     if json.loads(values["forwarding-rules.json"]):
         violations.append("external forwarding rule exists")
-    receipt = {
-        "schema_version": 1,
-        "valid": not violations,
-        "invalid_reasons": violations,
-        "files": {
-            name: hashlib.sha256(value.encode()).hexdigest() for name, value in sorted(values.items())
-        },
-    }
-    write_once(args.output / "receipt.json", json.dumps(receipt, sort_keys=True, indent=2) + "\n")
+    write_receipt(args.output, values, violations)
     if violations:
         parser.error("; ".join(violations))
     return 0

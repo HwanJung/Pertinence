@@ -2,14 +2,23 @@
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
-  echo "usage: $0 EXPECTED_KUBE_CONTEXT NEW_OUTPUT_DIR SAMPLE_COUNT INTERVAL_SECONDS" >&2
+  echo "usage: $0 EXPECTED_KUBE_CONTEXT NEW_OUTPUT_DIR SAMPLE_COUNT_OR_UNTIL_JOB INTERVAL_SECONDS" >&2
   exit 2
 fi
 expected_context=$1
 output_dir=$2
-sample_count=$3
+collection_limit=$3
 interval_seconds=$4
-[[ "$sample_count" =~ ^[1-9][0-9]{0,3}$ ]] || { echo "invalid sample count" >&2; exit 2; }
+sample_count=
+until_job=
+if [[ "$collection_limit" =~ ^[1-9][0-9]{0,3}$ ]]; then
+  sample_count=$collection_limit
+elif [[ "$collection_limit" =~ ^until-job:([a-z0-9]([-a-z0-9]*[a-z0-9])?)$ ]]; then
+  until_job=${collection_limit#until-job:}
+else
+  echo "invalid sample count or until-job selector" >&2
+  exit 2
+fi
 [[ "$interval_seconds" =~ ^([1-9]|[1-5][0-9]|60)$ ]] || {
   echo "interval must be 1 through 60 seconds" >&2
   exit 2
@@ -70,7 +79,8 @@ nodes=("${serving_nodes[@]}" "${loadgen_nodes[@]}")
   exit 1
 }
 
-for ((sample = 1; sample <= sample_count; sample++)); do
+sample=1
+while true; do
   prefix=$(printf '%s/sample-%04d' "$output_dir" "$sample")
   date --iso-8601=ns >"$prefix.timestamp.txt"
   kubectl --context "$expected_context" get --raw /apis/metrics.k8s.io/v1beta1/nodes \
@@ -87,9 +97,20 @@ for ((sample = 1; sample <= sample_count; sample++)); do
       --raw "/api/v1/nodes/$node/proxy/metrics/cadvisor" \
       >"$prefix.cadvisor-$node.prom"
   done
-  if ((sample < sample_count)); then
-    sleep "$interval_seconds"
+  terminal=false
+  if [[ -n "$until_job" ]]; then
+    kubectl --context "$expected_context" -n pertinence-serving get job "$until_job" -o json \
+      >"$prefix.job.json"
+    if python3 -c 'import json, sys; value=json.load(open(sys.argv[1], encoding="utf-8")); conditions=value.get("status", {}).get("conditions", []); raise SystemExit(0 if any(item.get("status") == "True" and item.get("type") in {"Complete", "Failed"} for item in conditions) else 1)' \
+      "$prefix.job.json"; then
+      terminal=true
+    fi
+  elif ((sample >= sample_count)); then
+    terminal=true
   fi
+  [[ "$terminal" == true ]] && break
+  sample=$((sample + 1))
+  sleep "$interval_seconds"
 done
 
 kubectl --context "$expected_context" get nodes -o json >"$output_dir/nodes-end.json"

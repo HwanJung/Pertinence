@@ -1,4 +1,4 @@
-# Direct CPU runtime pins used inside all seven portable component containers.
+# Direct CPU runtime pins shared by generic training and legacy bootstrap containers.
 # The PyTorch CPU index prevents CUDA libraries from entering the cloud image.
 --extra-index-url https://download.pytorch.org/whl/cpu
 

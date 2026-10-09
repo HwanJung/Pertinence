@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402 -- skip cleanly when the optional SDK is absent.
 
+import argparse
 import json
 from pathlib import Path
 import sys
@@ -12,11 +13,13 @@ import yaml
 pytest.importorskip("kfp")
 
 from pipelines.pertinence.components import make_components
+from pipelines.pertinence.cifar10_pipeline import compile_cifar10_pipeline
+from pipelines.pertinence.cifar10_submit import main as cifar10_submit_main
 from pipelines.pertinence.pipeline import compile_pipeline, make_pipeline
-from pipelines.pertinence.submit import main as submit_main
+from pipelines.pertinence.submit import _gcs_artifact_uri, main as submit_main
 
 
-def test_compile_fixed_dag_and_no_final_input_to_search(tmp_path):
+def test_compile_generic_dag_and_no_final_input_to_search(tmp_path):
     image = "example/pertinence@sha256:" + "a" * 64
     path = tmp_path / "pipeline.yaml"
     compile_pipeline(
@@ -26,14 +29,10 @@ def test_compile_fixed_dag_and_no_final_input_to_search(tmp_path):
     )
     ir, platform = list(yaml.safe_load_all(path.read_text()))
     assert set(ir["root"]["inputDefinitions"]["parameters"]) == {
-        "cifar10_uri",
-        "cifar10_sha256",
-        "shufflenet_checkpoint_uri",
-        "shufflenet_checkpoint_sha256",
-        "mobilenet_checkpoint_uri",
-        "mobilenet_checkpoint_sha256",
-        "resnet56_checkpoint_uri",
-        "resnet56_checkpoint_sha256",
+        "dataset_bundle_uri",
+        "dataset_bundle_sha256",
+        "expert_bundle_uri",
+        "expert_bundle_sha256",
         "run_config_uri",
         "run_config_sha256",
     }
@@ -52,8 +51,6 @@ def test_compile_fixed_dag_and_no_final_input_to_search(tmp_path):
     )
     assert tasks["evaluate-final"]["retryPolicy"]["maxRetryCount"] == 1
     for name in (
-        "prepare-dataset-bundle",
-        "export-expert-bundle",
         "validate-run",
         "build-routing-dataset",
         "train-dispatcher",
@@ -61,16 +58,12 @@ def test_compile_fixed_dag_and_no_final_input_to_search(tmp_path):
     ):
         assert not tasks[name].get("cachingOptions", {}).get("enableCache", False)
     assert "nvidia.com/gpu" not in json.dumps(ir)
-    assert ir["pipelineInfo"]["name"] == "pertinence-cifar10-cpu"
+    assert ir["pipelineInfo"]["name"] == "pertinence-routing-training-cpu"
     assert "gs://pertinence-runs/pipeline-root" in json.dumps(ir)
     assert set(tasks) == {
         "importer",
         "importer-2",
         "importer-3",
-        "importer-4",
-        "importer-5",
-        "prepare-dataset-bundle",
-        "export-expert-bundle",
         "validate-run",
         "build-routing-dataset",
         "train-dispatcher",
@@ -106,7 +99,7 @@ def test_compile_fixed_dag_and_no_final_input_to_search(tmp_path):
         for executor in ir["deploymentSpec"]["executors"].values()
         if "container" in executor
     ]
-    assert len(containers) == 7
+    assert len(containers) == 5
     assert all(container["image"] == image for container in containers)
     assert all(
         container["command"] == ["python", "-m", "pertinence.pipeline_cli"]
@@ -116,6 +109,60 @@ def test_compile_fixed_dag_and_no_final_input_to_search(tmp_path):
         environment = {item["name"]: item["value"] for item in container["env"]}
         assert environment["OMP_NUM_THREADS"] in {"1", "2", "4"}
         assert environment["MKL_NUM_THREADS"] == environment["OMP_NUM_THREADS"]
+    serialized = json.dumps(ir).lower()
+    for legacy_name in (
+        "cifar10_uri",
+        "shufflenet",
+        "mobilenet",
+        "resnet56",
+        "prepare-dataset-bundle",
+        "export-expert-bundle",
+    ):
+        assert legacy_name not in serialized
+
+
+def test_compile_retained_cifar10_legacy_dag(tmp_path):
+    image = "example/pertinence@sha256:" + "a" * 64
+    path = tmp_path / "cifar10-pipeline.yaml"
+    compile_cifar10_pipeline(
+        image=image,
+        pipeline_root="gs://pertinence-runs/pipeline-root",
+        output=path,
+    )
+    ir = list(yaml.safe_load_all(path.read_text()))[0]
+    assert ir["pipelineInfo"]["name"] == "pertinence-cifar10-cpu"
+    assert set(ir["root"]["inputDefinitions"]["parameters"]) == {
+        "cifar10_uri",
+        "cifar10_sha256",
+        "shufflenet_checkpoint_uri",
+        "shufflenet_checkpoint_sha256",
+        "mobilenet_checkpoint_uri",
+        "mobilenet_checkpoint_sha256",
+        "resnet56_checkpoint_uri",
+        "resnet56_checkpoint_sha256",
+        "run_config_uri",
+        "run_config_sha256",
+    }
+    assert set(ir["root"]["dag"]["tasks"]) == {
+        "importer",
+        "importer-2",
+        "importer-3",
+        "importer-4",
+        "importer-5",
+        "prepare-dataset-bundle",
+        "export-expert-bundle",
+        "validate-run",
+        "build-routing-dataset",
+        "train-dispatcher",
+        "evaluate-final",
+        "register-dispatchers",
+    }
+    containers = [
+        executor["container"]
+        for executor in ir["deploymentSpec"]["executors"].values()
+        if "container" in executor
+    ]
+    assert len(containers) == 7
 
 
 def test_mutable_image_tag_rejected():
@@ -127,6 +174,12 @@ def test_non_gcs_pipeline_root_rejected():
     image = "example/pertinence@sha256:" + "a" * 64
     with pytest.raises(ValueError, match="gs://"):
         make_pipeline(image, pipeline_root="s3://bucket/runs")
+
+
+@pytest.mark.parametrize("uri", ["gs://bucket", "gs://bucket/", "https://bucket/input"])
+def test_submit_artifact_uri_requires_gcs_object_or_prefix(uri):
+    with pytest.raises((ValueError, argparse.ArgumentTypeError)):
+        _gcs_artifact_uri(uri)
 
 
 def test_cache_can_be_enabled_for_recovery_runs(tmp_path):
@@ -168,13 +221,7 @@ def test_gke_submit_passes_service_account_and_gcs_parameters(monkeypatch, capsy
         "--service-account",
         "pipeline-runner",
     ]
-    for name in (
-        "cifar10",
-        "shufflenet-checkpoint",
-        "mobilenet-checkpoint",
-        "resnet56-checkpoint",
-        "run-config",
-    ):
+    for name in ("dataset-bundle", "expert-bundle", "run-config"):
         arguments.extend([f"--{name}-uri", f"gs://raw/{name}", f"--{name}-sha256", digest])
     monkeypatch.setattr("kfp.Client", Client)
     monkeypatch.setattr(sys, "argv", arguments)
@@ -184,6 +231,69 @@ def test_gke_submit_passes_service_account_and_gcs_parameters(monkeypatch, capsy
     assert calls["run"]["service_account"] == "pipeline-runner"
     assert calls["run"]["pipeline_root"] == "gs://runs/root"
     assert not calls["run"]["enable_caching"]
+    assert calls["run"]["experiment_name"] == "pertinence-routing-training"
+    assert calls["run"]["run_name"] == "pertinence-routing-training-cpu"
+    assert calls["run"]["arguments"] == {
+        "dataset_bundle_uri": "gs://raw/dataset-bundle",
+        "dataset_bundle_sha256": digest,
+        "expert_bundle_uri": "gs://raw/expert-bundle",
+        "expert_bundle_sha256": digest,
+        "run_config_uri": "gs://raw/run-config",
+        "run_config_sha256": digest,
+    }
+
+
+def test_retained_cifar10_submit_passes_legacy_parameters(monkeypatch, capsys):
+    calls = {}
+
+    class Client:
+        def __init__(self, **kwargs):
+            calls["client"] = kwargs
+
+        def create_run_from_pipeline_package(self, **kwargs):
+            calls["run"] = kwargs
+            return type("Result", (), {"run_id": "legacy-run"})()
+
+    digest = "b" * 64
+    arguments = [
+        "cifar10-submit",
+        "--pipeline",
+        "legacy.yaml",
+        "--pipeline-root",
+        "gs://runs/root",
+        "--namespace",
+        "kubeflow",
+        "--service-account",
+        "pipeline-runner",
+    ]
+    names = (
+        "cifar10",
+        "shufflenet-checkpoint",
+        "mobilenet-checkpoint",
+        "resnet56-checkpoint",
+        "run-config",
+    )
+    for name in names:
+        arguments.extend([f"--{name}-uri", f"gs://raw/{name}", f"--{name}-sha256", digest])
+    monkeypatch.setattr("kfp.Client", Client)
+    monkeypatch.setattr(sys, "argv", arguments)
+    cifar10_submit_main()
+
+    assert capsys.readouterr().out.strip() == "legacy-run"
+    assert calls["run"]["experiment_name"] == "pertinence-cifar10"
+    assert calls["run"]["run_name"] == "pertinence-cifar10-cpu"
+    assert set(calls["run"]["arguments"]) == {
+        "cifar10_uri",
+        "cifar10_sha256",
+        "shufflenet_checkpoint_uri",
+        "shufflenet_checkpoint_sha256",
+        "mobilenet_checkpoint_uri",
+        "mobilenet_checkpoint_sha256",
+        "resnet56_checkpoint_uri",
+        "resnet56_checkpoint_sha256",
+        "run_config_uri",
+        "run_config_sha256",
+    }
 
 
 def test_gke_manifests_select_gcs_and_existing_kfp_runner():

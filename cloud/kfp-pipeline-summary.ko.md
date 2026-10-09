@@ -3,6 +3,10 @@
 > 기준일: 2026-09-20  
 > 범위: GKE에서 실행하는 CIFAR-10 CPU 기반 Kubeflow Pipelines 구성
 
+> 이 문서는 2026-09-20에 검증한 7단계 `pertinence-cifar10-cpu` legacy 실행의 기록이다.
+> 현재 기본 compiler와 입력 계약은
+> [pipeline package README](../pipelines/pertinence/README.md)를 따른다.
+
 ## 1. 전체 구조
 
 이 파이프라인은 사전 학습된 세 개의 expert 모델과 CIFAR-10 데이터를 입력받아, 이미지별로

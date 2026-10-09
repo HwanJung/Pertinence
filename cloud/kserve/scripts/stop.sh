@@ -18,7 +18,6 @@ services=(
   expert-mobilenet
   expert-resnet56
   router-dispatcher-000733
-  router-static-resnet
 )
 status=0
 for service in "${services[@]}"; do
@@ -28,7 +27,7 @@ for service in "${services[@]}"; do
     status=1
   fi
 done
-for job in pertinence-loadgen pertinence-loadgen-cifar101-v6; do
+for job in pertinence-loadgen; do
   if ! kubectl --context "$expected_context" -n "$namespace" patch job "$job" \
       --type=merge -p '{"spec":{"suspend":true}}'; then
     echo "failed to suspend Job/$job; continuing" >&2
@@ -48,7 +47,7 @@ for service in "${services[@]}"; do
     status=1
   fi
 done
-for job in pertinence-loadgen pertinence-loadgen-cifar101-v6; do
+for job in pertinence-loadgen; do
   if ! observed=$(kubectl --context "$expected_context" -n "$namespace" get \
       job "$job" -o 'jsonpath={.spec.suspend}'); then
     echo "failed to verify Job/$job suspension" >&2
@@ -65,4 +64,4 @@ if (( status != 0 )); then
   echo "stop was incomplete; no object was deleted" >&2
   exit "$status"
 fi
-echo "five InferenceServices stopped and both loadgen Jobs suspended; no object was deleted"
+echo "four InferenceServices stopped and the loadgen Job suspended; no object was deleted"

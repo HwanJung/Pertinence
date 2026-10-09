@@ -35,21 +35,3 @@ metadata:
 immutable: true
 binaryData:
   benchmark.yaml: "${BENCHMARK_CONFIG_BASE64}"
----
-# Stable, cluster-internal alias. The switch script changes only this exact selector value.
-apiVersion: v1
-kind: Service
-metadata:
-  name: pertinence-active
-  namespace: pertinence-serving
-  labels:
-    app.kubernetes.io/part-of: pertinence
-spec:
-  type: ClusterIP
-  selector:
-    serving.kserve.io/inferenceservice: router-static-resnet
-  ports:
-    - name: http-v2
-      protocol: TCP
-      port: 80
-      targetPort: http-v2

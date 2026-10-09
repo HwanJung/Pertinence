@@ -16,8 +16,7 @@ PROJECT = "pertinence-509116"
 BUCKET = "pertinence-509116-pertinence-runs"
 GSA = "benchmark-runner@pertinence-509116.iam.gserviceaccount.com"
 RUN_SET = "run-20260921t120000z"
-FINAL_ID = "final-20260921t120000z"
-C101_ID = "c101-20260921t120000z"
+BENCHMARK_ID = "comparison-20260921t120000z"
 KSA = f"serviceAccount:{PROJECT}.svc.id.goog[pertinence-serving/benchmark-runner]"
 GSA_MEMBER = f"serviceAccount:{GSA}"
 
@@ -27,6 +26,20 @@ def _condition(title: str, prefix: str) -> dict[str, str]:
     return {
         "title": title,
         "expression": f"resource.name.startsWith('{resource}')",
+    }
+
+
+def _read_condition() -> dict[str, str]:
+    bucket_resource = f"projects/_/buckets/{BUCKET}"
+    trace = f"{bucket_resource}/objects/pertinence/benchmarks/traces/cifar10-final-20260824/"
+    run = f"{bucket_resource}/objects/pertinence/benchmarks/runs/{BENCHMARK_ID}/"
+    return {
+        "title": f"trace-final-{RUN_SET}",
+        "expression": (
+            f"resource.name == '{bucket_resource}' || "
+            f"resource.name.startsWith('{trace}') || "
+            f"resource.name.startsWith('{run}')"
+        ),
     }
 
 
@@ -42,24 +55,12 @@ def _policies() -> tuple[dict[str, object], dict[str, object]]:
             {
                 "role": "roles/storage.objectViewer",
                 "members": [GSA_MEMBER],
-                "condition": _condition(
-                    f"trace-final-{RUN_SET}", "traces/cifar10-final-20260824"
-                ),
-            },
-            {
-                "role": "roles/storage.objectViewer",
-                "members": [GSA_MEMBER],
-                "condition": _condition(f"trace-c101-{RUN_SET}", "traces/cifar10.1-v6"),
+                "condition": _read_condition(),
             },
             {
                 "role": "roles/storage.objectCreator",
                 "members": [GSA_MEMBER],
-                "condition": _condition(f"run-final-{RUN_SET}", f"runs/{FINAL_ID}"),
-            },
-            {
-                "role": "roles/storage.objectCreator",
-                "members": [GSA_MEMBER],
-                "condition": _condition(f"run-c101-{RUN_SET}", f"runs/{C101_ID}"),
+                "condition": _condition(f"run-{RUN_SET}", f"runs/{BENCHMARK_ID}"),
             },
             {
                 "role": "roles/storage.admin",
@@ -97,10 +98,8 @@ def _run(
         GSA,
         "--run-set-id",
         RUN_SET,
-        "--benchmark-id-final",
-        FINAL_ID,
-        "--benchmark-id-c101",
-        C101_ID,
+        "--benchmark-id",
+        BENCHMARK_ID,
         "--gsa-policy",
         str(paths["gsa"]),
         "--bucket-policy",
@@ -124,7 +123,7 @@ def test_accepts_exact_boundary_and_ignores_unrelated_principals(tmp_path: Path)
     assert result.returncode == 0, result.stderr
     assert receipt["valid"] is True
     assert receipt["observed"] == {
-        "benchmark_bucket_bindings": 4,
+        "benchmark_bucket_bindings": 2,
         "bucket_policy_etag": "CAE=",
         "gsa_policy_etag": "BwYAAABase64=",
         "user_managed_key_count": 0,
@@ -134,10 +133,11 @@ def test_accepts_exact_boundary_and_ignores_unrelated_principals(tmp_path: Path)
 @pytest.mark.parametrize(
     ("case", "expected"),
     [
-        ("missing", "exactly the four expected conditional bindings"),
-        ("wrong-expression", "exactly the four expected conditional bindings"),
+        ("missing", "exactly the two expected conditional bindings"),
+        ("wrong-expression", "exactly the two expected conditional bindings"),
+        ("trace-only", "exactly the two expected conditional bindings"),
         ("broad", "forbidden broad bucket role roles/storage.objectAdmin"),
-        ("extra-viewer", "exactly the four expected conditional bindings"),
+        ("extra-viewer", "exactly the two expected conditional bindings"),
     ],
 )
 def test_rejects_missing_mutated_or_excess_bucket_permissions(
@@ -150,6 +150,10 @@ def test_rejects_missing_mutated_or_excess_bucket_permissions(
         del bindings[0]
     elif case == "wrong-expression":
         bindings[0]["condition"]["expression"] += " "
+    elif case == "trace-only":
+        bindings[0]["condition"] = _condition(
+            f"trace-final-{RUN_SET}", "traces/cifar10-final-20260824"
+        )
     elif case == "broad":
         bindings.append({"role": "roles/storage.objectAdmin", "members": [GSA_MEMBER]})
     else:
@@ -212,10 +216,8 @@ def test_receipt_is_create_only(tmp_path: Path) -> None:
         GSA,
         "--run-set-id",
         RUN_SET,
-        "--benchmark-id-final",
-        FINAL_ID,
-        "--benchmark-id-c101",
-        C101_ID,
+        "--benchmark-id",
+        BENCHMARK_ID,
         "--gsa-policy",
         str(tmp_path / "gsa.json"),
         "--bucket-policy",

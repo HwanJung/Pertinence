@@ -6,11 +6,17 @@ from kfp import dsl
 from kfp.dsl import Artifact, Input, Output, OutputPath
 
 
-def make_components(image: str, *, cpu_threads: int = 4):
+def _validate_component_settings(image: str, cpu_threads: int) -> None:
     if not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image):
         raise ValueError("component image must be pinned by @sha256 digest")
     if type(cpu_threads) is not int or cpu_threads < 1:
         raise ValueError("cpu_threads must be a positive integer")
+
+
+def make_cifar10_bootstrap_components(image: str):
+    """Create the two legacy adapters from pinned CIFAR-10 raw assets."""
+
+    _validate_component_settings(image, 1)
     command = ["python", "-m", "pertinence.pipeline_cli"]
 
     @dsl.container_component
@@ -70,6 +76,18 @@ def make_components(image: str, *, cpu_threads: int = 4):
                 expert_bundle_sha256,
             ],
         )
+
+    return {
+        "prepare": prepare_dataset_bundle,
+        "export": export_expert_bundle,
+    }
+
+
+def make_training_components(image: str, *, cpu_threads: int = 4):
+    """Create the five bundle-driven components used by the generic pipeline."""
+
+    _validate_component_settings(image, cpu_threads)
+    command = ["python", "-m", "pertinence.pipeline_cli"]
 
     @dsl.container_component
     def validate_run(
@@ -223,11 +241,18 @@ def make_components(image: str, *, cpu_threads: int = 4):
         )
 
     return {
-        "prepare": prepare_dataset_bundle,
-        "export": export_expert_bundle,
         "validate": validate_run,
         "build": build_routing_dataset,
         "train": train_dispatcher,
         "evaluate": evaluate_final,
         "register": register_dispatchers,
+    }
+
+
+def make_components(image: str, *, cpu_threads: int = 4):
+    """Return the legacy seven-component set for callers that still need it."""
+
+    return {
+        **make_cifar10_bootstrap_components(image),
+        **make_training_components(image, cpu_threads=cpu_threads),
     }

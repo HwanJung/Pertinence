@@ -3,7 +3,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pertinence.serving.parity import ARMS, EXPECTED_CORRECT, verify_offline_online_parity
+from pertinence.serving.parity import (
+    ARMS,
+    EXPECTED_CORRECT,
+    ONLINE_ARMS,
+    verify_offline_online_parity,
+)
 from pertinence.serving.trace import create_trace
 
 
@@ -45,6 +50,8 @@ def _parity_inputs(tmp_path, correct_by_arm, *, logits: bool = False):
             arm_logits = np.full((SAMPLES, 10), arm_index, dtype=np.float32)
             arrays[f"{arm}_logits"] = arm_logits
         for index, prediction in enumerate(predictions):
+            if arm not in ONLINE_ARMS:
+                continue
             record = {
                 "arm": arm,
                 "repeat": 0,
@@ -78,10 +85,12 @@ def test_final_trace_retains_approved_accuracy_routes_and_hashes(tmp_path) -> No
 
     assert receipt["matched"] is True
     assert receipt["samples"] == SAMPLES
-    assert receipt["accuracy_correct"] == EXPECTED_CORRECT
+    assert receipt["accuracy_correct"] == {
+        arm: EXPECTED_CORRECT[arm] for arm in ONLINE_ARMS
+    }
     assert receipt["approved_accuracy_checked"] is True
     assert receipt["route_counts"] == [0, 640, 1360]
-    assert set(receipt["prediction_sha256"]) == set(ARMS)
+    assert set(receipt["prediction_sha256"]) == set(ONLINE_ARMS)
     assert len(receipt["dispatcher_route_sha256"]) == 64
     assert receipt["promotion_fingerprint"] == "b" * 64
     assert receipt["image_digests"] == {"runtime": "sha256:" + "c" * 64}
@@ -96,18 +105,20 @@ def test_cifar101_checks_exact_parity_without_predeclared_accuracy(tmp_path) -> 
         trace, local, records, golden_logits_atol=1e-6, golden_sample_index=17
     )
 
-    assert receipt["accuracy_correct"] == observed
+    assert receipt["accuracy_correct"] == {arm: observed[arm] for arm in ONLINE_ARMS}
     assert receipt["approved_accuracy_checked"] is False
     assert receipt["route_counts"] == [0, 640, 1360]
     assert receipt["golden_logits"]["sample_index"] == 17
-    assert receipt["golden_logits"]["max_absolute_error"] == {arm: 0.0 for arm in ARMS}
+    assert receipt["golden_logits"]["max_absolute_error"] == {
+        arm: 0.0 for arm in ONLINE_ARMS
+    }
 
 
 def test_cifar101_rejects_prediction_or_sample_order_mismatch(tmp_path) -> None:
     trace = _trace(tmp_path, "cifar10.1-v6")
     observed = {arm: 100 for arm in ARMS}
     local, records = _parity_inputs(tmp_path, observed)
-    records[0]["sample_id"] = "wrong"
+    next(item for item in records if item["arm"] == "dispatcher-000733")["sample_id"] = "wrong"
 
     with pytest.raises(ValueError, match="sample identity mismatch"):
         verify_offline_online_parity(trace, local, records)
@@ -116,7 +127,7 @@ def test_cifar101_rejects_prediction_or_sample_order_mismatch(tmp_path) -> None:
 def test_final_trace_rejects_unapproved_accuracy(tmp_path) -> None:
     trace = _trace(tmp_path, "cifar10-final-20260824")
     observed = dict(EXPECTED_CORRECT)
-    observed["resnet56"] -= 1
+    observed["dispatcher-000733"] -= 1
     local, records = _parity_inputs(tmp_path, observed)
 
     with pytest.raises(ValueError, match="approved offline accuracy mismatch"):

@@ -48,8 +48,7 @@ REQUIRED_INPUTS = {
     "BENCHMARK_GSA",
     "EVIDENCE_ROOT",
     "RUN_SET_ID",
-    "BENCHMARK_ID_FINAL",
-    "BENCHMARK_ID_C101",
+    "BENCHMARK_ID",
     "APPROVED_BY",
     "APPROVED_AT",
     "APPROVED_FINAL_LABEL_SHA256",
@@ -86,7 +85,6 @@ EVIDENCE_DIRECTORIES = (
     "12-workloads",
     "13-readiness",
     "14-parity",
-    "15-cold-start",
     "20-stop",
     "receipts",
 )
@@ -350,10 +348,7 @@ def validate_inputs(
     if approved_at.strftime("%Y-%m-%dT%H:%M:%SZ") != values["APPROVED_AT"]:
         raise ValueError("APPROVED_AT must be a canonical RFC3339 UTC timestamp")
 
-    ids = {
-        key: values[key]
-        for key in ("RUN_SET_ID", "BENCHMARK_ID_FINAL", "BENCHMARK_ID_C101")
-    }
+    ids = {key: values[key] for key in ("RUN_SET_ID", "BENCHMARK_ID")}
     for key, value in ids.items():
         if not DNS_ID_RE.fullmatch(value):
             raise ValueError(f"{key} must be a DNS-safe label")
@@ -444,14 +439,13 @@ def create_session(
     datasets_root = root / "datasets"
     datasets_root.mkdir(mode=0o700)
     datasets_root.chmod(0o700)
-    for benchmark_id in (values["BENCHMARK_ID_FINAL"], values["BENCHMARK_ID_C101"]):
-        dataset = datasets_root / benchmark_id
-        dataset.mkdir(mode=0o700)
-        dataset.chmod(0o700)
-        for child in ("raw", "external", "analysis", "publish"):
-            directory = dataset / child
-            directory.mkdir(mode=0o700)
-            directory.chmod(0o700)
+    dataset = datasets_root / values["BENCHMARK_ID"]
+    dataset.mkdir(mode=0o700)
+    dataset.chmod(0o700)
+    for child in ("raw", "external", "analysis", "publish"):
+        directory = dataset / child
+        directory.mkdir(mode=0o700)
+        directory.chmod(0o700)
 
     receipt = {
         "schema_version": 1,

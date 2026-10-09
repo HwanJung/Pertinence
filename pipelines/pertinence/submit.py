@@ -1,9 +1,10 @@
-"""Submit the compiled CPU pipeline to an OSS KFP API running on GKE."""
+"""Submit the generic bundle-driven CPU pipeline to an OSS KFP API on GKE."""
 
 from __future__ import annotations
 
 import argparse
 import re
+from urllib.parse import urlparse
 
 from .pipeline import _gcs_uri
 
@@ -14,6 +15,13 @@ def _sha256(value: str) -> str:
     return value
 
 
+def _gcs_artifact_uri(value: str) -> str:
+    uri = _gcs_uri(value)
+    if not urlparse(uri).path.strip("/"):
+        raise argparse.ArgumentTypeError("artifact URI must include an object or prefix path")
+    return uri
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="http://127.0.0.1:8888")
@@ -21,16 +29,10 @@ def main() -> None:
     parser.add_argument("--pipeline-root", required=True, type=_gcs_uri)
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--service-account", required=True)
-    parser.add_argument("--experiment-name", default="pertinence-cifar10")
-    parser.add_argument("--run-name", default="pertinence-cifar10-cpu")
-    for name in (
-        "cifar10",
-        "shufflenet-checkpoint",
-        "mobilenet-checkpoint",
-        "resnet56-checkpoint",
-        "run-config",
-    ):
-        parser.add_argument(f"--{name}-uri", required=True, type=_gcs_uri)
+    parser.add_argument("--experiment-name", default="pertinence-routing-training")
+    parser.add_argument("--run-name", default="pertinence-routing-training-cpu")
+    for name in ("dataset-bundle", "expert-bundle", "run-config"):
+        parser.add_argument(f"--{name}-uri", required=True, type=_gcs_artifact_uri)
         parser.add_argument(f"--{name}-sha256", required=True, type=_sha256)
     cache = parser.add_mutually_exclusive_group()
     cache.add_argument("--enable-cache", action="store_true", dest="enable_cache")
@@ -43,14 +45,10 @@ def main() -> None:
     result = Client(host=args.host, namespace=args.namespace).create_run_from_pipeline_package(
         pipeline_file=args.pipeline,
         arguments={
-            "cifar10_uri": args.cifar10_uri,
-            "cifar10_sha256": args.cifar10_sha256,
-            "shufflenet_checkpoint_uri": args.shufflenet_checkpoint_uri,
-            "shufflenet_checkpoint_sha256": args.shufflenet_checkpoint_sha256,
-            "mobilenet_checkpoint_uri": args.mobilenet_checkpoint_uri,
-            "mobilenet_checkpoint_sha256": args.mobilenet_checkpoint_sha256,
-            "resnet56_checkpoint_uri": args.resnet56_checkpoint_uri,
-            "resnet56_checkpoint_sha256": args.resnet56_checkpoint_sha256,
+            "dataset_bundle_uri": args.dataset_bundle_uri,
+            "dataset_bundle_sha256": args.dataset_bundle_sha256,
+            "expert_bundle_uri": args.expert_bundle_uri,
+            "expert_bundle_sha256": args.expert_bundle_sha256,
             "run_config_uri": args.run_config_uri,
             "run_config_sha256": args.run_config_sha256,
         },

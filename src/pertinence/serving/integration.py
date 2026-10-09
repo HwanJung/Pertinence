@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ctypes
 from dataclasses import dataclass, field
+import errno
 import hashlib
 import json
 import os
@@ -360,10 +362,37 @@ def _new_output(path: Path) -> Iterator[Path]:
         yield temporary
         if output.exists() or output.is_symlink():
             raise ValueError(f"output appeared during integration: {output}")
-        os.rename(temporary, output)
+        try:
+            _rename_directory_no_replace(temporary, output)
+        except FileExistsError as error:
+            raise ValueError(f"output appeared during integration: {output}") from error
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
+
+
+def _rename_directory_no_replace(source: Path, destination: Path) -> None:
+    """Atomically publish a directory without replacing a racing destination."""
+
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except AttributeError as error:
+        raise OSError(errno.ENOSYS, "renameat2 is required for create-only publication") from error
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        -100,
+        os.fsencode(source),
+        -100,
+        os.fsencode(destination),
+        1,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise FileExistsError(error_number, os.strerror(error_number), destination)
+    raise OSError(error_number, os.strerror(error_number), destination)
 
 
 def _stage_build_bundle(

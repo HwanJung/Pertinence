@@ -84,7 +84,12 @@ def _render(tmp_path: Path) -> list[dict[str, object]]:
 def test_rendered_workloads_are_internal_pinned_and_pool_isolated(tmp_path: Path) -> None:
     documents = _render(tmp_path)
     services = [item for item in documents if item["kind"] == "InferenceService"]
-    assert len(services) == 5
+    assert {service["metadata"]["name"] for service in services} == {
+        "expert-shufflenet",
+        "expert-mobilenet",
+        "expert-resnet56",
+        "router-dispatcher-000733",
+    }
     assert not {"Ingress", "Gateway", "HTTPRoute", "NetworkPolicy"} & {
         item["kind"] for item in documents
     }
@@ -103,27 +108,29 @@ def test_rendered_workloads_are_internal_pinned_and_pool_isolated(tmp_path: Path
                 "effect": "NoSchedule",
             }
         ]
-        if service["metadata"]["name"] != "router-static-resnet":
-            assert predictor["storageUris"][0]["uri"].startswith("oci://")
-            assert "@sha256:" in predictor["storageUris"][0]["uri"]
+        assert predictor["storageUris"][0]["uri"].startswith("oci://")
+        assert "@sha256:" in predictor["storageUris"][0]["uri"]
         container = predictor["containers"][0]
         assert "@sha256:" in container["image"]
         assert container["resources"]["requests"] == {"cpu": "1", "memory": "1Gi"}
         assert container["resources"]["limits"] == {"cpu": "1", "memory": "1Gi"}
         assert container["securityContext"]["runAsNonRoot"] is True
 
-    active = next(item for item in documents if item["kind"] == "Service")
-    assert active["spec"]["type"] == "ClusterIP"
-    assert active["spec"]["selector"]["serving.kserve.io/inferenceservice"] == (
-        "router-static-resnet"
-    )
-
-    job = next(item for item in documents if item["kind"] == "Job")
+    assert not [item for item in documents if item["kind"] == "Service"]
+    jobs = [item for item in documents if item["kind"] == "Job"]
+    assert len(jobs) == 1
+    job = jobs[0]
     assert job["spec"]["suspend"] is True
     pod = job["spec"]["template"]["spec"]
     assert pod["nodeSelector"] == {"cloud.google.com/gke-nodepool": "loadgen-pool"}
     assert any(volume.get("emptyDir") == {} for volume in pod["volumes"])
     assert "persistentVolumeClaim" not in json.dumps(pod)
+    args = pod["containers"][0]["args"]
+    endpoints = [args[index + 1] for index, item in enumerate(args) if item == "--endpoint"]
+    assert endpoints == [
+        "resnet56=http://expert-resnet56-predictor.pertinence-serving.svc.cluster.local",
+        "dispatcher-000733=http://router-dispatcher-000733-predictor.pertinence-serving.svc.cluster.local",
+    ]
 
 
 def test_promoted_expert_names_and_lineage_runtime_arguments(tmp_path: Path) -> None:
@@ -147,8 +154,6 @@ def test_promoted_expert_names_and_lineage_runtime_arguments(tmp_path: Path) -> 
     assert router_args[router_args.index("--bundle-path") + 1] == "/mnt/models"
     assert router_args[router_args.index("--promotion") + 1] == "/etc/pertinence/promotion.json"
     assert router_args.count("--expert-url") == 3
-    static = services["router-static-resnet"]["spec"]["predictor"]
-    assert "storageUris" not in static
     promotion = next(
         item
         for item in documents
@@ -156,11 +161,10 @@ def test_promoted_expert_names_and_lineage_runtime_arguments(tmp_path: Path) -> 
         and item["metadata"]["name"] == "promotion-dispatcher-000733"
     )
     assert promotion["immutable"] is True
-    for router_name in ("router-dispatcher-000733", "router-static-resnet"):
-        predictor = services[router_name]["spec"]["predictor"]
-        assert predictor["volumes"] == [
-            {"name": "promotion", "configMap": {"name": "promotion-dispatcher-000733"}}
-        ]
+    predictor = services["router-dispatcher-000733"]["spec"]["predictor"]
+    assert predictor["volumes"] == [
+        {"name": "promotion", "configMap": {"name": "promotion-dispatcher-000733"}}
+    ]
 
 
 def test_renderer_rejects_sentinel_digests(tmp_path: Path) -> None:
@@ -213,6 +217,7 @@ def test_runtime_and_modelcar_images_are_non_root_and_version_locked() -> None:
     assert "USER 65532:65532" in runtime
     assert "numpy==1.26.4" in requirements
     assert "onnxruntime==1.20.1" in requirements
+    assert "requests==2.33.0" in requirements
     assert "USER 65532:65532" in modelcar
     assert "COPY --chown=65532:65532 bundle/ /models/" in modelcar
     assert (KSERVE / "runtime" / "Dockerfile.dockerignore").is_file()
@@ -221,12 +226,13 @@ def test_runtime_and_modelcar_images_are_non_root_and_version_locked() -> None:
 def test_build_and_audit_assets_are_fail_closed() -> None:
     cloudbuild = (KSERVE / "cloudbuild.yaml").read_text(encoding="utf-8")
     audit = (KSERVE / "scripts" / "audit-exposure.sh").read_text(encoding="utf-8")
-    switch = (KSERVE / "scripts" / "switch-active.sh").read_text(encoding="utf-8")
     assert "for expert in shufflenetv2_x0_5 mobilenetv2_x0_5 resnet56" in cloudbuild
     assert "dispatcher-000733-modelcar:${_BUILD_ID}" in cloudbuild
     assert "--platform linux/amd64" in cloudbuild
     assert "|| true" not in audit
-    assert "/v2/models/$model_name/infer" in switch
+    assert "serving.kserve.io/stop=true" in (
+        KSERVE / "scripts" / "stop.sh"
+    ).read_text(encoding="utf-8")
 
 
 def test_modelcar_preparer_embeds_inventory_and_rejects_extra_files(tmp_path: Path) -> None:

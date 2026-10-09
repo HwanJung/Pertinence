@@ -82,8 +82,8 @@ def test_stop_attempts_every_target_after_one_failure(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     calls = log.read_text(encoding="utf-8").splitlines()
-    assert sum(" annotate inferenceservice " in call for call in calls) == 5
-    assert sum(" patch job " in call for call in calls) == 2
+    assert sum(" annotate inferenceservice " in call for call in calls) == 4
+    assert sum(" patch job " in call for call in calls) == 1
     assert all("--context expected-context" in call for call in calls[1:])
     assert "no object was deleted" in result.stderr
 
@@ -155,12 +155,77 @@ def test_cold_start_failure_preserves_evidence_and_reapplies_stop(tmp_path: Path
     assert (output / "failure-stop.txt").is_file()
     calls = log.read_text(encoding="utf-8").splitlines()
     assert any("apply --server-side" in call for call in calls)
-    assert sum(" annotate inferenceservice " in call for call in calls) == 5
-    assert sum(" patch job " in call for call in calls) == 2
+    assert sum(" annotate inferenceservice " in call for call in calls) == 4
+    assert sum(" patch job " in call for call in calls) == 1
     assert all(
         call == "config current-context" or "--context expected-context" in call
         for call in calls
     )
+
+
+def test_external_collector_can_follow_job_to_terminal_condition(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _executable(
+        bin_dir / "kubectl",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$KUBE_LOG"
+if [[ "$*" == "config current-context" ]]; then
+  printf '%s\n' "$EXPECTED_CONTEXT"
+elif [[ "$*" == *" get nodes -l "*"serving-pool"* ]]; then
+  printf '%s\n' 'serving-node'
+elif [[ "$*" == *" get nodes -l "*"loadgen-pool"* ]]; then
+  printf '%s\n' 'loadgen-node'
+elif [[ "$*" == *" get job pertinence-loadgen -o json"* ]]; then
+  count=0
+  [[ ! -f "$JOB_STATE_FILE" ]] || count=$(<"$JOB_STATE_FILE")
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$JOB_STATE_FILE"
+  if ((count >= 2)); then
+    printf '%s\n' '{"status":{"conditions":[{"type":"Complete","status":"True"}]}}'
+  else
+    printf '%s\n' '{"status":{"conditions":[]}}'
+  fi
+elif [[ "$*" == *" get nodes -o json"* ]]; then
+  printf '%s\n' '{"items":[{"metadata":{"name":"serving-node","labels":{"cloud.google.com/gke-nodepool":"serving-pool","node.kubernetes.io/instance-type":"n2-standard-8"}},"spec":{"providerID":"provider-serving"}},{"metadata":{"name":"loadgen-node","labels":{"cloud.google.com/gke-nodepool":"loadgen-pool","node.kubernetes.io/instance-type":"n2-standard-4"}},"spec":{"providerID":"provider-loadgen"}}]}'
+elif [[ "$*" == *" get pods -o json"* || "$*" == *" get workflows.argoproj.io -o json"* ]]; then
+  printf '%s\n' '{"items":[]}'
+elif [[ "$*" == *" -o json"* ]]; then
+  printf '%s\n' '{"items":[]}'
+elif [[ "$*" == *" get --raw "* ]]; then
+  printf '%s\n' '{}'
+else
+  printf '%s\n' 'ok'
+fi
+""",
+    )
+    _executable(bin_dir / "sleep", "#!/usr/bin/env bash\nexit 0\n")
+    log = tmp_path / "kubectl.log"
+    output = tmp_path / "external-window"
+    environment = _environment(bin_dir, log)
+    environment["JOB_STATE_FILE"] = str(tmp_path / "job-state")
+
+    result = subprocess.run(
+        [
+            str(SCRIPTS / "collect-evidence.sh"),
+            "expected-context",
+            str(output),
+            "until-job:pertinence-loadgen",
+            "5",
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (output / "sample-0001.job.json").is_file()
+    assert (output / "sample-0002.job.json").is_file()
+    assert json.loads((output / "validation.json").read_text())["snapshot_invalid_reasons"] == []
+    assert not (output / "INVALID.json").exists()
 
 
 def _load_preflight_module():
@@ -172,7 +237,12 @@ def _load_preflight_module():
     return module
 
 
-def _preflight_output(command: list[str], *, configured_project: str = "project-1") -> str:
+def _preflight_output(
+    command: list[str],
+    *,
+    configured_project: str = "project-1",
+    all_regions_cpu_available: int = 20,
+) -> str:
     joined = " ".join(command)
     if command == ["kubectl", "config", "current-context"]:
         return "gke_project-1_region-1-a_cluster-1\n"
@@ -187,6 +257,18 @@ def _preflight_output(command: list[str], *, configured_project: str = "project-
     if "compute regions describe" in joined:
         return json.dumps(
             {"quotas": [{"metric": metric, "limit": 20, "usage": 0} for metric in ("CPUS", "N2_CPUS")]}
+        )
+    if "compute project-info describe" in joined:
+        return json.dumps(
+            {
+                "quotas": [
+                    {
+                        "metric": "CPUS_ALL_REGIONS",
+                        "limit": all_regions_cpu_available + 4,
+                        "usage": 4,
+                    }
+                ]
+            }
         )
     if " version -o json" in joined:
         return json.dumps({"serverVersion": {"major": "1", "minor": "35"}})
@@ -267,3 +349,43 @@ def test_preflight_seals_cluster_and_project_snapshot(
         receipt = json.loads((output / "receipt.json").read_text())
         assert receipt["valid"] is False
         assert receipt["invalid_reasons"] == ["active gcloud project differs"]
+
+
+def test_preflight_rejects_insufficient_all_regions_cpu_quota(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_preflight_module()
+    monkeypatch.setattr(
+        module,
+        "run",
+        lambda command: _preflight_output(command, all_regions_cpu_available=8),
+    )
+    output = tmp_path / "preflight"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "preflight-gke.py",
+            "--context", "gke_project-1_region-1-a_cluster-1",
+            "--project", "project-1",
+            "--region", "region-1",
+            "--zone", "region-1-a",
+            "--cluster", "cluster-1",
+            "--repository", "repository-1",
+            "--principal", "operator@example.com",
+            "--node-service-account", "node@project-1.iam.gserviceaccount.com",
+            "--output", str(output),
+            "--quota-only",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        module.main()
+
+    receipt = json.loads((output / "receipt.json").read_text())
+    assert receipt["valid"] is False
+    assert receipt["invalid_reasons"] == [
+        "all-regions CPU quota has less than 12 vCPUs available"
+    ]
+    assert (output / "global-quota.json").is_file()
+    assert not (output / "cluster.json").exists()

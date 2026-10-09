@@ -2,9 +2,9 @@
 
 ## 원칙
 
-이 문서는 보존 중인 GKE Standard/KFP 2.17.0 환경에서 현재 3-expert CPU pipeline을 반복 실행하는
-절차다. 실제 구조는 [architecture](architecture.ko.md), 첫 production 실행의 immutable 증거는
-[run record](runs/2026-09-20-dispatcher-gke.ko.md)를 따른다.
+이 문서는 보존 중인 GKE Standard/KFP 2.17.0 환경에서 prebuilt Bundle을 받는 범용 CPU pipeline을
+실행하는 절차다. 실제 구조는 [architecture](architecture.ko.md), 7단계 CIFAR-10 legacy production
+실행의 immutable 증거는 [run record](runs/2026-09-20-dispatcher-gke.ko.md)를 따른다.
 
 - 모든 cloud 입력은 GCS URI와 SHA-256으로 고정한다.
 - Component image는 Artifact Registry manifest digest로 고정한다.
@@ -55,7 +55,8 @@ kubectl get deployments,pvc -n "$NAMESPACE"
 
 KFP pipeline 반복 실행에는 baseline인 `training-current.tfvars`를 사용한다. Online benchmark를 위해
 두 pool을 추가하는 `benchmark-current.tfvars`는 이 절차가 아니라
-[KServe benchmark runbook](kserve-benchmark-runbook.ko.md)의 saved-plan guard를 따른다.
+[benchmark Plan](benchmark/Plan.md)과
+[KServe benchmark 실행 참고서](kserve-benchmark-execution.ko.md)의 saved-plan guard를 따른다.
 
 ```bash
 terraform -chdir=cloud/iac/environments/dispatcher-current init \
@@ -101,7 +102,7 @@ GSA의 condition은 bucket resource 자체의 list와 지정 experiment object p
 Pod credential smoke는 같은 KSA로 작은 test object의 list/read/write를 확인한 뒤 즉시 별도 prefix에
 남기거나 정리한다. JSON service-account key는 생성하거나 mount하지 않는다.
 
-## 4. Raw input 준비
+## 4. Bundle input 준비
 
 로컬 asset manifest 검증을 먼저 통과한다.
 
@@ -112,24 +113,50 @@ Pod credential smoke는 같은 KSA로 작은 test object의 list/read/write를 �
   --verify-only
 ```
 
-Archive, checkpoint 3개와 production RunConfig를 실행별 immutable prefix에 올린다. 아래 경로는
-형식 예시이며 실제 `EXPERIMENT_PREFIX`를 포함해야 한다.
+Dataset adapter와 model adapter를 로컬 또는 별도 Job에서 실행해 다음 형태를 먼저 만든다.
 
-```bash
-gcloud storage cp artifacts/cifar10/datasets/cifar-10-python.tar.gz \
-  "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/cifar-10-python.tar.gz"
-gcloud storage cp artifacts/cifar10/checkpoints/cifar10_shufflenetv2_x0_5-1308b4e9.pt \
-  "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/cifar10_shufflenetv2_x0_5.pt"
-gcloud storage cp artifacts/cifar10/checkpoints/cifar10_mobilenetv2_x0_5-ca14ced9.pt \
-  "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/cifar10_mobilenetv2_x0_5.pt"
-gcloud storage cp artifacts/cifar10/checkpoints/cifar10_resnet56-187c023a.pt \
-  "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/cifar10_resnet56.pt"
-gcloud storage cp experiments/cifar10/configs/pipeline-run.yaml \
-  "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/pipeline-run.yaml"
+```text
+dataset-bundle/
+├── dataset.yaml
+├── train/part-*.parquet
+└── evaluation/part-*.parquet
+
+expert-bundle/
+├── experts.yaml
+└── models/<expert-id>/model.onnx
 ```
 
-각 local byte SHA-256, GCS generation/CRC32C와 최종 URI를 execution manifest에 기록한다. Object
-이름이 같다는 이유로 immutable하다고 간주하지 않는다.
+이미 Parquet/ONNX source가 준비됐다면 `package-dataset`과 `package-experts`로 manifest와 content
+digest를 봉인한다. CIFAR-10 raw archive와 기존 checkpoint를 변환할 때만 보존된 legacy adapter
+명령을 사용한다.
+
+```bash
+.venv/bin/pertinence package-dataset \
+  --source artifacts/cifar10/portable/dataset-source \
+  --output artifacts/cifar10/portable/dataset-bundle
+.venv/bin/pertinence package-experts \
+  --source artifacts/cifar10/portable/expert-source \
+  --output artifacts/cifar10/portable/expert-bundle
+
+DATASET_SHA256=$(.venv/bin/pertinence artifact-sha256 \
+  artifacts/cifar10/portable/dataset-bundle)
+EXPERT_SHA256=$(.venv/bin/pertinence artifact-sha256 \
+  artifacts/cifar10/portable/expert-bundle)
+RUN_CONFIG_SHA256=$(.venv/bin/pertinence artifact-sha256 \
+  experiments/cifar10/configs/pipeline-run.yaml)
+```
+
+각 입력은 digest를 포함한 새 prefix에 no-overwrite 방식으로 업로드한다. DatasetBundle과
+ExpertBundle의 manifest가 각각 다음 URI 바로 아래에 있어야 한다.
+
+```text
+gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/datasets/${DATASET_SHA256}/dataset.yaml
+gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/experts/${EXPERT_SHA256}/experts.yaml
+gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/configs/${RUN_CONFIG_SHA256}/run.yaml
+```
+
+각 local digest, GCS generation/CRC32C와 최종 URI를 execution manifest에 기록한다. 같은 object나
+prefix를 overwrite하지 않으며 이름만 같다는 이유로 immutable하다고 간주하지 않는다.
 
 ## 5. Component image
 
@@ -154,21 +181,41 @@ Compiler는 `kfp==2.17.0`과 `kfp-kubernetes==2.17.x` lock을 사용한다.
   --image "$COMPONENT_IMAGE" \
   --pipeline-root "gs://${RUN_BUCKET}/pertinence/runs" \
   --cpu-threads 4 \
-  --output "artifacts/cifar10/portable/${EXPERIMENT_PREFIX}-pipeline.yaml"
+  --output "artifacts/cifar10/portable/${EXPERIMENT_PREFIX}-generic-pipeline.yaml"
 ```
 
 Compile test에서 다음을 확인한다.
 
-- container executor 정확히 7개, importer를 포함한 전체 task 12개;
+- container executor 정확히 5개, importer를 포함한 전체 task 8개;
 - 모든 image가 같은 digest로 고정;
-- executor 7개에만 `pipeline-pool` selector+toleration 적용;
+- executor 5개에만 `pipeline-pool` selector+toleration 적용;
 - GPU request 없음;
 - search input에 final artifact/URI/volume 없음;
 - `train-dispatcher` deadline 72시간, retry 0;
 - registration cache off.
 
 API server를 local `8888`로 port-forward하고 `pipelines.pertinence.submit`에 IR, pipeline root,
-namespace, `pipeline-runner`, 다섯 input URI/SHA를 전달한다. Production은 기본적으로 cache off다.
+namespace, `pipeline-runner`, 세 Bundle/config URI와 SHA를 전달한다.
+
+```bash
+.venv/bin/python -m pipelines.pertinence.submit \
+  --host http://127.0.0.1:8888 \
+  --pipeline "artifacts/cifar10/portable/${EXPERIMENT_PREFIX}-generic-pipeline.yaml" \
+  --pipeline-root "gs://${RUN_BUCKET}/pertinence/runs" \
+  --namespace "$NAMESPACE" \
+  --service-account "$KSA" \
+  --dataset-bundle-uri \
+    "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/datasets/${DATASET_SHA256}" \
+  --dataset-bundle-sha256 "$DATASET_SHA256" \
+  --expert-bundle-uri \
+    "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/experts/${EXPERT_SHA256}" \
+  --expert-bundle-sha256 "$EXPERT_SHA256" \
+  --run-config-uri \
+    "gs://${RAW_BUCKET}/${EXPERIMENT_PREFIX}/configs/${RUN_CONFIG_SHA256}/run.yaml" \
+  --run-config-sha256 "$RUN_CONFIG_SHA256"
+```
+
+Production은 기본적으로 cache off다.
 실패 복구 cache는 같은 immutable input과 image를 재사용할 때 compile과 submit 양쪽에서만 켠다.
 
 제출 직후 experiment ID, KFP run ID, Argo Workflow, IR SHA와 pipeline root를 execution manifest에
@@ -191,13 +238,18 @@ Container executor가 system pool에 배치되거나 importer가 raw byte 연산
 
 Run 성공만으로 완료하지 않는다.
 
-1. KFP run과 container component 7개 모두 Succeeded;
+1. KFP run과 generic container component 5개 모두 Succeeded;
 2. input SHA, contract와 split/cache fingerprint 일치;
 3. 50×50 NSGA-II와 retained checkpoint 전체 복원 완료;
 4. final metric finite, confusion/sample 합계 일치;
 5. registration report와 SQLite row/idempotency key 일치;
 6. IR, run ID, Git/patch SHA, image digest, GKE/KFP version 기록;
 7. GCS에서 artifact와 diagnostics를 다시 읽을 수 있음.
+
+범용화 release gate에는 동일 IR로 synthetic 2-expert와 5-expert run 성공, 기존 CIFAR-10 Bundle
+3-expert 결과 동등성, 잘못된 digest가 validate에서 실패하고 downstream task가 시작되지 않는다는
+증거를 추가한다. Legacy raw-input 재현이 필요하면 `pipelines.pertinence.cifar10_pipeline`과
+`pipelines.pertinence.cifar10_submit`을 사용하며 기존 7개 component gate를 적용한다.
 
 성공/실패 run 모두 workflow, Pod, event, node, PVC/PV, deployment, network inventory와 relevant log를
 run-scoped diagnostics prefix에 보존한다. KFP metadata와 PVC는 GCS artifact가 아니므로 cluster 종료

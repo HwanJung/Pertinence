@@ -24,7 +24,6 @@ OUTPUT_URI_RE = re.compile(
 )
 ALLOWED_BENCHMARK_JOBS = {
     "pertinence-loadgen",
-    "pertinence-loadgen-cifar101-v6",
 }
 LOADGEN_TOLERATION = {
     "key": "workload",
@@ -48,10 +47,7 @@ CONTAINER_SECURITY_CONTEXT = {
     "runAsUser": 65532,
 }
 EXPECTED_ENDPOINTS = [
-    "shufflenetv2_x0_5=http://expert-shufflenet-predictor.pertinence-serving.svc.cluster.local",
-    "mobilenetv2_x0_5=http://expert-mobilenet-predictor.pertinence-serving.svc.cluster.local",
     "resnet56=http://expert-resnet56-predictor.pertinence-serving.svc.cluster.local",
-    "static-resnet-router=http://router-static-resnet-predictor.pertinence-serving.svc.cluster.local",
     "dispatcher-000733=http://router-dispatcher-000733-predictor.pertinence-serving.svc.cluster.local",
 ]
 
@@ -141,7 +137,7 @@ def _parse_cli_args(args: object, source: str) -> tuple[dict[str, str], list[str
 
 
 def validate_benchmark_job(document: dict[str, Any], source: str) -> list[str]:
-    """Validate the two create-only benchmark Jobs against the execution contract."""
+    """Validate the create-only benchmark Job against the execution contract."""
     errors: list[str] = []
     metadata = document.get("metadata")
     if not isinstance(metadata, dict):
@@ -349,8 +345,6 @@ def validate_document(document: object, source: str) -> list[str]:
         if predictor.get("tolerations") != [required_toleration]:
             errors.append(f"{source}: InferenceService toleration differs from serving contract")
         storage = predictor.get("storageUris", [])
-        if name == "router-static-resnet" and storage:
-            errors.append(f"{source}: static router must not use a modelcar")
         for index, item in enumerate(storage):
             uri = item.get("uri") if isinstance(item, dict) else None
             if not isinstance(uri, str) or not uri.startswith("oci://"):
@@ -407,6 +401,9 @@ def main() -> int:
     args = parser.parse_args()
     errors: list[str] = []
     namespaces: set[str] = set()
+    inference_services: set[str] = set()
+    benchmark_jobs: set[str] = set()
+    benchmark_contract_seen = False
     for path in args.yaml_file:
         try:
             documents = yaml.safe_load_all(path.read_text(encoding="utf-8"))
@@ -415,6 +412,22 @@ def main() -> int:
                     name = document.get("metadata", {}).get("name")
                     if isinstance(name, str):
                         namespaces.add(name)
+                if isinstance(document, dict) and document.get("kind") in {
+                    "InferenceService",
+                    "Job",
+                }:
+                    name = document.get("metadata", {}).get("name")
+                    if isinstance(name, str):
+                        if document["kind"] == "InferenceService":
+                            inference_services.add(name)
+                        elif document.get("metadata", {}).get("namespace") == "pertinence-serving":
+                            benchmark_jobs.add(name)
+                if (
+                    isinstance(document, dict)
+                    and document.get("kind") == "ConfigMap"
+                    and document.get("metadata", {}).get("name") == "benchmark-config"
+                ):
+                    benchmark_contract_seen = True
                 errors.extend(validate_document(document, f"{path}:document[{index}]"))
         except (OSError, yaml.YAMLError) as error:
             errors.append(f"{path}: {error}")
@@ -424,6 +437,17 @@ def main() -> int:
             "rendered install is missing explicit namespaces: "
             + ", ".join(sorted(required_namespaces - namespaces))
         )
+    if benchmark_contract_seen:
+        expected_services = {
+            "expert-shufflenet",
+            "expert-mobilenet",
+            "expert-resnet56",
+            "router-dispatcher-000733",
+        }
+        if inference_services != expected_services:
+            errors.append("rendered benchmark must contain exactly the four approved InferenceServices")
+        if benchmark_jobs != {"pertinence-loadgen"}:
+            errors.append("rendered benchmark must contain exactly the final loadgen Job")
     if errors:
         parser.error("\n".join(errors))
     return 0

@@ -9,6 +9,6 @@
   값을 검증한다.
 
 modelcar에는 `promotion.json`을 넣지 않는다. 네 modelcar digest가 나온 뒤 promotion을 봉인하고
-immutable ConfigMap으로 router에 mount한다. static router는 modelcar를 사용하지 않는다.
+immutable ConfigMap으로 dispatcher router에 mount한다.
 `build-modelcar.sh KIND BUNDLE_DIR ...`는 symlink와 allowlist 밖 파일을 거부하며 push 직후 registry가
 반환한 digest reference를 출력한다.

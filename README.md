@@ -8,8 +8,8 @@ ten-model CIFAR-10 accuracy–cost boundary as a static comparison.
 Two execution paths are intentionally separate:
 
 - the local CUDA workflow builds native PyTorch caches and runs the original CLI stages;
-- the verified cloud workflow runs the portable seven-component pipeline on GKE and OSS
-  Kubeflow Pipelines (KFP).
+- the portable cloud workflow accepts prebuilt dataset/expert bundles in a generic five-component
+  KFP DAG, while the verified seven-component CIFAR-10 bootstrap DAG remains available as legacy.
 
 The cloud documentation describes what was actually deployed and exercised. Future KServe
 and online-serving work is isolated in a roadmap and is not presented as current capability.
@@ -98,6 +98,9 @@ after the preflight passes on the configured CUDA device.
 - [Cloud architecture](cloud/docs/architecture.ko.md): deployed boundaries and scheduling.
 - [Cloud runbook](cloud/docs/runbook.ko.md): Terraform safety, GCS preparation, image build,
   compile, submit, verification, and preservation procedure.
+- [KServe benchmark Plan](cloud/docs/benchmark/Plan.md): `/goal`-ready execution order, gates,
+  evidence, and explicit completion conditions.
+- [KServe benchmark Progress](cloud/docs/benchmark/Progress.md): resumable live execution state.
 - [Cloud roadmap](cloud/docs/roadmap.ko.md): explicitly unimplemented KServe and benchmark work.
 - [Terraform guide](cloud/iac/README.md): state bootstrap, adoption, plan guards, and profiles.
 

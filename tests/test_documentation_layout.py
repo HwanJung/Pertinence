@@ -17,6 +17,8 @@ def test_documentation_has_one_current_structure() -> None:
         "cloud/docs/architecture.ko.md",
         "cloud/docs/runbook.ko.md",
         "cloud/docs/roadmap.ko.md",
+        "cloud/docs/benchmark/Plan.md",
+        "cloud/docs/benchmark/Progress.md",
         "cloud/docs/runs/2026-09-20-dispatcher-gke.ko.md",
         "cloud/kfp/kfp-launcher-configmap.yaml",
         "cloud/kfp/service-account.yaml",
@@ -75,3 +77,19 @@ def test_local_markdown_links_resolve() -> None:
             target = (markdown.parent / relative_path).resolve()
             assert target.is_relative_to(ROOT), f"link escapes repository: {markdown}: {raw_target}"
             assert target.exists(), f"broken link: {markdown}: {raw_target}"
+
+
+def test_current_benchmark_docs_do_not_describe_superseded_scope() -> None:
+    current = (
+        "cloud/docs/benchmark/Plan.md",
+        "cloud/docs/benchmark/Progress.md",
+        "cloud/docs/kserve-benchmark-runbook.ko.md",
+        "cloud/docs/kserve-benchmark-execution.ko.md",
+        "experiments/cifar10/docs/kserve-benchmark-protocol.ko.md",
+    )
+    forbidden = ("single-target", "CIFAR-10.1", "five-arm", "P00", "P21")
+
+    for relative_path in current:
+        text = (ROOT / relative_path).read_text(encoding="utf-8")
+        for phrase in forbidden:
+            assert phrase not in text, f"{relative_path}: stale phrase {phrase}"

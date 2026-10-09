@@ -5,16 +5,95 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 import math
+import os
 from pathlib import Path
 from typing import Any
 import re
+import tempfile
 
 import numpy as np
 
-from .statistics import hierarchical_paired_bootstrap, paired_accuracy_summary
+
+_METRIC_LINE = re.compile(
+    r"^(?P<name>[a-z_]+)\{(?P<labels>[^}]*)\}\s+"
+    r"(?P<value>[-+0-9.eE]+)(?:\s+[-+0-9.eE]+)?$"
+)
+BENCHMARK_ARMS = ("resnet56", "dispatcher-000733")
+EXPECTED_CORRECT = {"resnet56": 1892, "dispatcher-000733": 1893}
+EXPECTED_DISPATCHER_ROUTES = [0, 640, 1360]
+POD_FRAGMENTS = {
+    "resnet56": ("expert-resnet56",),
+    "dispatcher-000733": (
+        "router-dispatcher-000733",
+        "expert-shufflenet",
+        "expert-mobilenet",
+        "expert-resnet56",
+    ),
+}
 
 
-_METRIC_LINE = re.compile(r"^(?P<name>[a-z_]+)\{(?P<labels>[^}]*)\}\s+(?P<value>[-+0-9.eE]+)$")
+def request_matrix_inventory(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    arms: Sequence[str],
+    repeats: int,
+    samples: int,
+) -> dict[str, object]:
+    """Inventory request coordinates without computing or publishing numeric effects."""
+
+    if not arms or len(set(arms)) != len(arms) or repeats < 1 or samples < 1:
+        raise ValueError("request matrix contract is invalid")
+    expected_arms = set(arms)
+    cells: set[tuple[str, int, int]] = set()
+    duplicate_cells = 0
+    invalid_records = 0
+    unexpected_arms: set[str] = set()
+    for record in records:
+        if not isinstance(record, Mapping):
+            invalid_records += 1
+            continue
+        arm = record.get("arm")
+        repeat = record.get("repeat")
+        sample = record.get("sample_index")
+        if not isinstance(arm, str) or arm not in expected_arms:
+            invalid_records += 1
+            if isinstance(arm, str):
+                unexpected_arms.add(arm)
+            continue
+        if (
+            type(repeat) is not int
+            or type(sample) is not int
+            or not 0 <= repeat < repeats
+            or not 0 <= sample < samples
+        ):
+            invalid_records += 1
+            continue
+        cell = (arm, repeat, sample)
+        if cell in cells:
+            duplicate_cells += 1
+        else:
+            cells.add(cell)
+    expected_cells = len(arms) * repeats * samples
+    missing_cells = expected_cells - len(cells)
+    complete = (
+        missing_cells == 0
+        and duplicate_cells == 0
+        and invalid_records == 0
+        and len(records) == expected_cells
+    )
+    return {
+        "complete": complete,
+        "arms": list(arms),
+        "repeats": repeats,
+        "samples_per_arm_repeat": samples,
+        "expected_records": expected_cells,
+        "observed_records": len(records),
+        "unique_cells": len(cells),
+        "missing_cells": missing_cells,
+        "duplicate_cells": duplicate_cells,
+        "invalid_records": invalid_records,
+        "unexpected_arms": sorted(unexpected_arms),
+    }
 
 
 def summarize_pod_counters(
@@ -83,24 +162,30 @@ def summarize_arm_counters(
     markers: Sequence[Mapping[str, Any]],
     requests: Sequence[Mapping[str, Any]],
 ) -> dict[str, object]:
-    """Cross-check per-arm request CPU against cAdvisor deltas within marker windows."""
+    """Summarize the complete serving stack used within each measured arm window."""
 
-    snapshots: dict[int, dict[tuple[str, str], float]] = defaultdict(dict)
+    snapshots: dict[int, dict[tuple[str, str], float]] = defaultdict(lambda: defaultdict(float))
+    pod_snapshots: dict[int, list[Mapping[str, Any]]] = {}
     for record in evidence_records:
         timestamp = int(record["timestamp_ns"])
+        raw_pods = record.get("pods")
+        if isinstance(raw_pods, list):
+            pod_snapshots[timestamp] = raw_pods
         for line in record.get("metrics", []):
             match = _METRIC_LINE.fullmatch(str(line))
             if not match:
                 continue
-            pod = next(
-                (
-                    item.split("=", 1)[1].strip('"')
-                    for item in match.group("labels").split(",")
-                    if item.startswith("pod=")
-                ),
-                "unknown",
-            )
-            snapshots[timestamp][(match.group("name"), pod)] = float(match.group("value"))
+            labels = {
+                key: raw.strip('"')
+                for item in match.group("labels").split(",")
+                if "=" in item
+                for key, raw in (item.split("=", 1),)
+            }
+            pod = labels.get("pod", "unknown")
+            container = labels.get("container")
+            if container in {"", "POD"}:
+                continue
+            snapshots[timestamp][(match.group("name"), pod)] += float(match.group("value"))
     starts = {
         (str(item["arm"]), int(item["repeat"])): int(item["timestamp_ns"])
         for item in markers
@@ -111,79 +196,128 @@ def summarize_arm_counters(
         for item in markers
         if item.get("event") == "arm_end"
     }
-    if starts.keys() != ends.keys() or not starts:
+    if starts.keys() != ends.keys() or set(starts) != {(arm, 0) for arm in BENCHMARK_ARMS}:
         raise ValueError("arm marker pairs are incomplete")
-    pod_fragments = {
-        "shufflenetv2_x0_5": ("expert-shufflenet",),
-        "mobilenetv2_x0_5": ("expert-mobilenet",),
-        "resnet56": ("expert-resnet56",),
-        "static-resnet-router": ("router-static-resnet", "expert-resnet56"),
-        "dispatcher-000733": (
-            "router-dispatcher-000733",
-            "expert-shufflenet",
-            "expert-mobilenet",
-            "expert-resnet56",
-        ),
-    }
     result: dict[str, object] = {}
-    for arm in sorted({key[0] for key in starts}):
-        cpu_delta = 0.0
-        throttled_delta = 0.0
-        throttled_periods = 0.0
-        periods = 0.0
-        memory_peak = 0.0
-        for key in sorted(key for key in starts if key[0] == arm):
-            selected = [
-                (timestamp, snapshot)
-                for timestamp, snapshot in sorted(snapshots.items())
-                if starts[key] <= timestamp <= ends[key]
-            ]
-            if len(selected) < 2:
-                raise ValueError(f"metric gap leaves fewer than two samples for {arm}")
-            first, last = selected[0][1], selected[-1][1]
-            relevant_keys = {
-                metric_key
+    for arm in BENCHMARK_ARMS:
+        key = (arm, 0)
+        selected = [
+            (timestamp, snapshot)
+            for timestamp, snapshot in sorted(snapshots.items())
+            if starts[key] <= timestamp <= ends[key]
+        ]
+        if len(selected) < 2:
+            raise ValueError(f"metric gap leaves fewer than two samples for {arm}")
+        relevant_pods = sorted(
+            {
+                pod
                 for _, snapshot in selected
-                for metric_key in snapshot
-                if any(fragment in metric_key[1] for fragment in pod_fragments[arm])
+                for _, pod in snapshot
+                if any(fragment in pod for fragment in POD_FRAGMENTS[arm])
             }
-            for metric_key in relevant_keys:
-                metric = metric_key[0]
-                values = [snapshot[metric_key] for _, snapshot in selected if metric_key in snapshot]
-                if metric == "container_memory_working_set_bytes":
-                    memory_peak = max(memory_peak, max(values))
-                elif metric_key in first and metric_key in last:
-                    delta = last[metric_key] - first[metric_key]
-                    if delta < 0:
-                        raise ValueError("cAdvisor counter reset detected")
-                    if metric == "container_cpu_usage_seconds_total":
-                        cpu_delta += delta
-                    elif metric == "container_cpu_cfs_throttled_seconds_total":
-                        throttled_delta += delta
-                    elif metric == "container_cpu_cfs_throttled_periods_total":
-                        throttled_periods += delta
-                    elif metric == "container_cpu_cfs_periods_total":
-                        periods += delta
+        )
+        if any(not any(fragment in pod for pod in relevant_pods) for fragment in POD_FRAGMENTS[arm]):
+            raise ValueError(f"serving pod metrics are incomplete for {arm}")
+        per_pod: dict[str, dict[str, object]] = {}
+        for pod in relevant_pods:
+            memory_key = ("container_memory_working_set_bytes", pod)
+            if any(memory_key not in snapshot for _, snapshot in selected):
+                raise ValueError(f"cAdvisor memory series is incomplete for {pod}")
+            pod_memory = [snapshot[memory_key] for _, snapshot in selected]
+            deltas: dict[str, float] = {}
+            for metric in (
+                "container_cpu_usage_seconds_total",
+                "container_cpu_cfs_throttled_seconds_total",
+                "container_cpu_cfs_throttled_periods_total",
+                "container_cpu_cfs_periods_total",
+            ):
+                metric_key = (metric, pod)
+                if metric_key not in selected[0][1] or metric_key not in selected[-1][1]:
+                    raise ValueError(f"cAdvisor counter series is incomplete for {pod}")
+                delta = selected[-1][1][metric_key] - selected[0][1][metric_key]
+                if delta < 0:
+                    raise ValueError("cAdvisor counter reset detected")
+                deltas[metric] = delta
+            per_pod[pod] = {
+                "cpu_seconds": deltas["container_cpu_usage_seconds_total"],
+                "memory_working_set_average_bytes": float(np.mean(pod_memory)),
+                "memory_working_set_peak_bytes": int(max(pod_memory)),
+                "throttled_seconds": deltas["container_cpu_cfs_throttled_seconds_total"],
+                "throttled_periods": deltas["container_cpu_cfs_throttled_periods_total"],
+                "periods": deltas["container_cpu_cfs_periods_total"],
+            }
         arm_requests = [item for item in requests if item.get("arm") == arm]
+        cpu_delta = sum(float(item["cpu_seconds"]) for item in per_pod.values())
         if not arm_requests or cpu_delta <= 0:
             raise ValueError(f"missing request or cAdvisor CPU evidence for {arm}")
-        request_cpu_ms = sum(int(item.get("process_cpu_ns", 0)) for item in arm_requests) / 1e6
-        pod_cpu_ms = cpu_delta * 1_000
+        memory_totals = [
+            sum(
+                snapshot.get(("container_memory_working_set_bytes", pod), 0.0)
+                for pod in relevant_pods
+            )
+            for _, snapshot in selected
+        ]
+        throttled_delta = sum(float(item["throttled_seconds"]) for item in per_pod.values())
+        throttled_periods = sum(float(item["throttled_periods"]) for item in per_pod.values())
+        periods = sum(float(item["periods"]) for item in per_pod.values())
+        pod_count = len(POD_FRAGMENTS[arm])
         result[arm] = {
             "requests": len(arm_requests),
-            "request_cpu_per_request_ms": request_cpu_ms / len(arm_requests),
-            "pod_cpu_per_request_ms": pod_cpu_ms / len(arm_requests),
-            "cpu_crosscheck_ratio": request_cpu_ms / pod_cpu_ms,
-            "memory_peak_bytes": int(memory_peak),
+            "cpu_seconds": cpu_delta,
+            "cpu_ms_per_request": cpu_delta * 1_000 / len(arm_requests),
+            "memory_working_set_average_bytes": float(np.mean(memory_totals)),
+            "memory_working_set_peak_bytes": int(max(memory_totals)),
             "throttled_seconds": throttled_delta,
             "throttled_period_ratio": throttled_periods / periods if periods else None,
+            "pods": per_pod,
+            "kubernetes_resources": {
+                "cpu_requests_cores": pod_count,
+                "cpu_limits_cores": pod_count,
+                "memory_requests_bytes": pod_count * 1024**3,
+                "memory_limits_bytes": pod_count * 1024**3,
+            },
         }
     timestamps = sorted(snapshots)
+    relevant_fragments = POD_FRAGMENTS["dispatcher-000733"]
+    first_pods: dict[str, tuple[str, int]] = {}
+    last_pods: dict[str, tuple[str, int]] = {}
+    if pod_snapshots:
+        first_timestamp, last_timestamp = min(pod_snapshots), max(pod_snapshots)
+        for source, destination in (
+            (pod_snapshots[first_timestamp], first_pods),
+            (pod_snapshots[last_timestamp], last_pods),
+        ):
+            for item in source:
+                name = item.get("name")
+                uid = item.get("uid")
+                restart_count = item.get("restart_count")
+                if (
+                    isinstance(name, str)
+                    and any(fragment in name for fragment in relevant_fragments)
+                    and isinstance(uid, str)
+                    and type(restart_count) is int
+                ):
+                    destination[name] = (uid, restart_count)
+    expected_pod_fragments_present = all(
+        any(fragment in name for name in first_pods) for fragment in relevant_fragments
+    )
+    pod_identity_stable = (
+        expected_pod_fragments_present
+        and first_pods.keys() == last_pods.keys()
+        and all(first_pods[name][0] == last_pods[name][0] for name in first_pods)
+    )
+    pod_restart_delta = (
+        sum(last_pods[name][1] - first_pods[name][1] for name in first_pods)
+        if pod_identity_stable
+        else None
+    )
     return {
         "arms": result,
         "metric_gap_count": sum(
             right - left > 7_500_000_000 for left, right in zip(timestamps, timestamps[1:])
         ),
+        "pod_identity_stable": pod_identity_stable,
+        "pod_restart_delta": pod_restart_delta,
     }
 
 
@@ -230,8 +364,11 @@ def _matrix_default(
 
 def _quantiles(values: np.ndarray) -> dict[str, float]:
     return {
-        key: float(np.quantile(values, quantile, method="linear"))
-        for key, quantile in (("p50", 0.50), ("p95", 0.95), ("p99", 0.99))
+        "mean": float(np.mean(values)),
+        **{
+            key: float(np.quantile(values, quantile, method="linear"))
+            for key, quantile in (("p50", 0.50), ("p95", 0.95), ("p99", 0.99))
+        },
     }
 
 
@@ -266,28 +403,21 @@ def derive_validity(evidence: Mapping[str, Any]) -> dict[str, object]:
 def analyze_records(
     records: Sequence[Mapping[str, Any]],
     *,
-    baseline_arm: str = "static-resnet-router",
-    comparison_arm: str = "dispatcher-000733",
-    expected_repeats: int = 5,
+    expected_repeats: int = 1,
     expected_samples: int = 2000,
-    seed: int = 73,
-    bootstrap_samples: int = 10_000,
 ) -> dict[str, object]:
-    """Analyze a valid run without imposing an effect-size pass/fail threshold."""
+    """Analyze one complete direct-ResNet/dispatcher pass without inference statistics."""
 
-    if expected_repeats < 1 or expected_samples < 1:
-        raise ValueError("expected run dimensions must be positive")
+    if expected_repeats != 1 or expected_samples < 1:
+        raise ValueError("analysis requires exactly one pass and a positive sample count")
     dataset_ids = {record.get("dataset_id") for record in records if "dataset_id" in record}
     if len(dataset_ids) > 1:
         raise ValueError("each benchmark summary must contain exactly one dataset")
     by_arm = _records_by_arm(records)
-    if baseline_arm not in by_arm or comparison_arm not in by_arm:
-        raise ValueError("baseline or comparison arm is absent")
+    if set(by_arm) != set(BENCHMARK_ARMS):
+        raise ValueError("analysis requires exactly resnet56 and dispatcher-000733")
 
     arm_summaries: dict[str, object] = {}
-    correctness: dict[str, np.ndarray] = {}
-    latency: dict[str, np.ndarray] = {}
-    cpu: dict[str, np.ndarray] = {}
     for arm, arm_records in sorted(by_arm.items()):
         latency_matrix = _matrix(
             arm_records, "latency_ns", repeats=expected_repeats, samples=expected_samples
@@ -298,7 +428,7 @@ def analyze_records(
         predictions = _matrix(
             arm_records, "prediction", repeats=expected_repeats, samples=expected_samples
         ).astype(np.int64)
-        # Accuracy is defined on the unique trace, not 5x duplicated traffic.
+        # Accuracy is defined on the unique trace.
         stable_prediction = np.all(predictions == predictions[0], axis=0)
         stable_correctness = np.all(correct_matrix == correct_matrix[0], axis=0)
         route_counts: dict[str, int] = defaultdict(int)
@@ -323,10 +453,12 @@ def analyze_records(
             for stage, duration in dict(item.get("stage_latency_ns", {})).items():
                 stage_values[str(stage)].append(float(duration) / 1_000_000.0)
         elapsed = (max(completed) - min(starts)) / 1e9 if starts and max(completed) > min(starts) else 0
+        correct_count = int(np.sum(correct_matrix[0]))
         arm_summaries[arm] = {
             "requests": len(arm_records),
             "unique_samples": expected_samples,
-            "accuracy": float(correct_matrix[0].mean()),
+            "correct": correct_count,
+            "accuracy": correct_count / expected_samples,
             "unstable_prediction_samples": int(np.sum(~stable_prediction)),
             "unstable_correctness_samples": int(np.sum(~stable_correctness)),
             "latency_ms": _quantiles(flattened_ms),
@@ -338,98 +470,57 @@ def analyze_records(
             "missed_schedule_observations": schedule_misses,
             "route_distribution_all_requests": dict(sorted(route_counts.items())),
         }
-        correctness[arm] = correct_matrix[0]
-        latency[arm] = latency_matrix
-        cpu[arm] = cpu_matrix
-
-    accuracy = paired_accuracy_summary(
-        correctness[baseline_arm],
-        correctness[comparison_arm],
-        seed=seed,
-        bootstrap_samples=bootstrap_samples,
-    )
-    performance = {
-        statistic: hierarchical_paired_bootstrap(
-            latency[baseline_arm] / 1_000_000.0,
-            latency[comparison_arm] / 1_000_000.0,
-            seed=seed + offset,
-            bootstrap_samples=bootstrap_samples,
-            statistic=statistic,
-        )
-        for offset, statistic in enumerate(("mean", "p50", "p95", "p99"))
-    }
-    cpu_performance = {
-        statistic: hierarchical_paired_bootstrap(
-            cpu[baseline_arm] / 1_000_000.0,
-            cpu[comparison_arm] / 1_000_000.0,
-            seed=seed + 20 + offset,
-            bootstrap_samples=bootstrap_samples,
-            statistic=statistic,
-        )
-        for offset, statistic in enumerate(("mean", "p50", "p95", "p99"))
-    }
-    comparison_pairs = [
-        (arm, "dispatcher-000733")
-        for arm in (
-            "shufflenetv2_x0_5",
-            "mobilenetv2_x0_5",
-            "resnet56",
-            "static-resnet-router",
-        )
-        if arm in by_arm and "dispatcher-000733" in by_arm
-    ]
-    if "resnet56" in by_arm and "static-resnet-router" in by_arm:
-        comparison_pairs.append(("resnet56", "static-resnet-router"))
-    paired_comparisons = {}
-    for pair_index, (left, right) in enumerate(comparison_pairs):
-        paired_comparisons[f"{left}_vs_{right}"] = {
-            "left_arm": left,
-            "right_arm": right,
-            "accuracy": paired_accuracy_summary(
-                correctness[left],
-                correctness[right],
-                seed=seed + 100 + pair_index,
-                bootstrap_samples=bootstrap_samples,
+    baseline = arm_summaries["resnet56"]
+    dispatcher = arm_summaries["dispatcher-000733"]
+    latency_comparison = {
+        metric: {
+            "absolute_difference_ms": (
+                dispatcher["latency_ms"][metric] - baseline["latency_ms"][metric]
             ),
-            "latency_ms": {
-                statistic: hierarchical_paired_bootstrap(
-                    latency[left] / 1_000_000.0,
-                    latency[right] / 1_000_000.0,
-                    seed=seed + 200 + pair_index * 10 + offset,
-                    bootstrap_samples=bootstrap_samples,
-                    statistic=statistic,
-                )
-                for offset, statistic in enumerate(("mean", "p50", "p95", "p99"))
-            },
-            "request_cpu_ms": {
-                statistic: hierarchical_paired_bootstrap(
-                    cpu[left] / 1_000_000.0,
-                    cpu[right] / 1_000_000.0,
-                    seed=seed + 300 + pair_index * 10 + offset,
-                    bootstrap_samples=bootstrap_samples,
-                    statistic=statistic,
-                )
-                for offset, statistic in enumerate(("mean", "p50", "p95", "p99"))
-            },
+            "ratio": dispatcher["latency_ms"][metric] / baseline["latency_ms"][metric],
         }
-    latency_interval = performance["p95"]["paired_bootstrap_95_ci"]
-    accuracy_interval = accuracy["paired_bootstrap_95_ci"]
-    uncertain = bool(accuracy_interval[0] <= 0.0 <= accuracy_interval[1])
+        for metric in ("mean", "p50", "p95", "p99")
+    }
+    latency_comparison["achieved_rps"] = {
+        "absolute_difference": dispatcher["achieved_rps"] - baseline["achieved_rps"],
+        "ratio": dispatcher["achieved_rps"] / baseline["achieved_rps"],
+    }
+    route_counts = [
+        int(dispatcher["route_distribution_all_requests"].get(str(route), 0))
+        for route in range(3)
+    ]
+    accuracy_matches = all(
+        arm_summaries[arm]["correct"] == expected for arm, expected in EXPECTED_CORRECT.items()
+    )
+    routes_match = route_counts == EXPECTED_DISPATCHER_ROUTES
     return {
         "schema_version": 1,
         "kind": "benchmark-summary",
-        "effect_policy": "descriptive-only-no-predeclared-pass-fail-threshold",
-        "interpretation": "uncertain" if uncertain else "estimated",
-        "arms": arm_summaries,
-        "comparison": {
-            "baseline_arm": baseline_arm,
-            "comparison_arm": comparison_arm,
-            "accuracy": accuracy,
-            "latency_ms": performance,
-            "request_cpu_ms": cpu_performance,
-            "p95_interval_crosses_zero": bool(latency_interval[0] <= 0.0 <= latency_interval[1]),
+        "effect_policy": "two-arm-single-pass-descriptive-only",
+        "interpretation": "descriptive",
+        "accuracy": {
+            "arms": {
+                arm: {
+                    "samples": expected_samples,
+                    "correct": arm_summaries[arm]["correct"],
+                    "value": arm_summaries[arm]["accuracy"],
+                }
+                for arm in BENCHMARK_ARMS
+            },
+            "dispatcher_minus_resnet56_percentage_points": (
+                dispatcher["accuracy"] - baseline["accuracy"]
+            ) * 100.0,
+            "offline_expected_correct": EXPECTED_CORRECT,
+            "matches_offline_expected": accuracy_matches,
+            "dispatcher_route_counts": route_counts,
+            "offline_expected_dispatcher_route_counts": EXPECTED_DISPATCHER_ROUTES,
+            "routes_match_offline_expected": routes_match,
         },
-        "paired_comparisons": paired_comparisons,
+        "performance": {
+            "arms": arm_summaries,
+            "latency_comparison": latency_comparison,
+        },
+        "offline_expected_matches": accuracy_matches and routes_match,
         "offline_mflops_note": "Offline MFLOPs are intentionally not treated as online CPU/latency.",
     }
 
@@ -453,6 +544,14 @@ def write_parquet(records: Sequence[Mapping[str, Any]], output: Path) -> None:
         flattened.append(row)
     output.parent.mkdir(parents=True, exist_ok=True)
     table = pa.Table.from_pylist(flattened)
-    temporary = output.with_name(f".{output.name}.part")
-    pq.write_table(table, temporary, compression="zstd")
-    temporary.replace(output)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        pq.write_table(table, temporary, compression="zstd")
+        try:
+            os.link(temporary, output, follow_symlinks=False)
+        except FileExistsError as error:
+            raise ValueError(f"output already exists: {output}") from error
+    finally:
+        temporary.unlink(missing_ok=True)

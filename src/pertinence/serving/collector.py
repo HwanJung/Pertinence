@@ -30,6 +30,25 @@ def filter_cadvisor(text: str) -> list[str]:
     return result
 
 
+def pod_inventory(payload: bytes) -> list[dict[str, object]]:
+    """Extract stable serving Pod identity and restart counters from a Kubernetes response."""
+
+    value = json.loads(payload)
+    result = []
+    for item in value.get("items", []):
+        metadata = item.get("metadata", {})
+        name = metadata.get("name")
+        uid = metadata.get("uid")
+        if not isinstance(name, str) or not isinstance(uid, str):
+            raise RuntimeError("collector received malformed Pod identity")
+        statuses = item.get("status", {}).get("containerStatuses", [])
+        if not isinstance(statuses, list):
+            raise RuntimeError("collector received malformed Pod status")
+        restart_count = sum(int(status.get("restartCount", 0)) for status in statuses)
+        result.append({"name": name, "uid": uid, "restart_count": restart_count})
+    return sorted(result, key=lambda item: str(item["name"]))
+
+
 def collect_until_done(
     output: Path,
     done: Path,
@@ -66,11 +85,17 @@ def collect_until_done(
     with Path(output).open("x", encoding="utf-8") as stream:
         while not Path(done).exists():
             timestamp_ns = time.time_ns()
+            pods = pod_inventory(get("/api/v1/namespaces/pertinence-serving/pods"))
             for node in names:
                 payload = get(f"/api/v1/nodes/{node}/proxy/metrics/cadvisor").decode()
                 stream.write(
                     json.dumps(
-                        {"timestamp_ns": timestamp_ns, "node": node, "metrics": filter_cadvisor(payload)},
+                        {
+                            "timestamp_ns": timestamp_ns,
+                            "node": node,
+                            "metrics": filter_cadvisor(payload),
+                            "pods": pods,
+                        },
                         sort_keys=True,
                     )
                     + "\n"

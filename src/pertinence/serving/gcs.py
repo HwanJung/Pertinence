@@ -100,7 +100,11 @@ def _credentials() -> Any:
     try:
         credentials, _ = google.auth.default(scopes=(_STORAGE_SCOPE,))
         return credentials
-    except DefaultCredentialsError:
+    except DefaultCredentialsError as error:
+        if os.environ.get("KUBERNETES_SERVICE_HOST"):
+            raise RuntimeError(
+                "Application Default Credentials are unavailable inside Kubernetes"
+            ) from error
         return _GcloudCredentials()
 
 

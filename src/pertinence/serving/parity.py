@@ -21,6 +21,7 @@ ARMS = (
     "static-resnet-router",
     "dispatcher-000733",
 )
+ONLINE_ARMS = ("resnet56", "dispatcher-000733")
 FINAL_TRACE_ID = "cifar10-final-20260824"
 CIFAR101_TRACE_ID = "cifar10.1-v6"
 EXPECTED_CORRECT = {
@@ -64,7 +65,7 @@ def _validate_provenance(
 def _online_by_arm(
     online_records: Sequence[Mapping[str, Any]], samples: int
 ) -> dict[str, dict[int, Mapping[str, Any]]]:
-    by_arm: dict[str, dict[int, Mapping[str, Any]]] = {arm: {} for arm in ARMS}
+    by_arm: dict[str, dict[int, Mapping[str, Any]]] = {arm: {} for arm in ONLINE_ARMS}
     for record in online_records:
         arm = record.get("arm")
         repeat = record.get("repeat")
@@ -93,7 +94,7 @@ def _golden_logits_receipt(
     if not 0 <= sample_index < samples:
         raise ValueError("golden logits sample index is out of range")
     max_errors: dict[str, float] = {}
-    for arm in ARMS:
+    for arm in ONLINE_ARMS:
         key = f"{arm}_logits"
         if key not in archive:
             raise ValueError(f"local parity NPZ is missing golden logits for {arm}")
@@ -158,7 +159,7 @@ def verify_offline_online_parity(
         )
         if set(archive.files) != allowed:
             raise ValueError("local parity NPZ keys differ from the expected set")
-        for arm in ARMS:
+        for arm in ONLINE_ARMS:
             local = np.asarray(archive[f"{arm}_predictions"])
             if (
                 local.shape != (samples,)

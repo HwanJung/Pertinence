@@ -1,5 +1,5 @@
 schema_version: 1
-benchmark_name: cifar10-kserve-dispatcher-000733
+benchmark_name: cifar10-kserve-resnet56-vs-dispatcher-000733
 seed: 20260920
 throughput_saturation_test: false
 
@@ -33,28 +33,9 @@ datasets:
     source: promoted_dataset_bundle
     sample_ids_sha256: 323c5f237cf1a7dd81d5e726ae684c067dd28213c6a1460b023801f3c05f07f5
     offline_parity:
-      shufflenetv2_x0_5_correct: 1809
-      mobilenetv2_x0_5_correct: 1858
       resnet56_correct: 1892
       dispatcher-000733_correct: 1893
       dispatcher-000733_route_counts: [0, 640, 1360]
-  - dataset_id: cifar10.1-v6
-    samples: 2000
-    class_counts: [200, 200, 200, 200, 200, 200, 200, 200, 200, 200]
-    sample_ids_sha256: dd38c564f131c3815ffa7a32888b7f092b181d80e12deab6f3b81f30a5e16661
-    label_values_sha256: 2b1636e92dc42ddc27bf84f4aa6bfba816ceb71844af81bbd0eff6d6474e5b72
-    upstream:
-      repository: modestyachts/CIFAR-10.1
-      revision: d9982abb0bfc4846b8d13a11e66b887d946205d0
-      data:
-        url: https://raw.githubusercontent.com/modestyachts/CIFAR-10.1/d9982abb0bfc4846b8d13a11e66b887d946205d0/datasets/cifar10.1_v6_data.npy
-        sha256: 2997188e5816f5bd545dc77771b6227828c28146049fcecf3fa10775474cacc6
-        size_bytes: 6144128
-      labels:
-        url: https://raw.githubusercontent.com/modestyachts/CIFAR-10.1/d9982abb0bfc4846b8d13a11e66b887d946205d0/datasets/cifar10.1_v6_labels.npy
-        sha256: ae40beda001693674edc94d925ee8268cfe68905f8f9aff800c8dcdfcd6c9448
-        size_bytes: 8128
-
 request:
   input_name: image
   dtype: FP32
@@ -68,33 +49,24 @@ request:
   max_in_flight: 1
 
 arms:
-  - shufflenetv2_x0_5
-  - mobilenetv2_x0_5
   - resnet56
-  - static-resnet-router
   - dispatcher-000733
 
-calibration:
-  warmup_requests_per_arm: 200
-  measured_requests_per_arm: 200
-  request_rate_rule: min(2 RPS, 10% of slowest arm p95-derived capacity)
+warmup:
+  requests_per_arm: 200
+  distinct_samples: true
 
 steady_state:
-  repeats: 5
-  order: cyclic_latin_square
-  requests_per_dataset_arm_repeat: 2000
+  order: single_pass
+  arm_order: [resnet56, dispatcher-000733]
+  requests_per_arm: 2000
+  fixed_rps: 2
   queue_on_missed_schedule: false
 
-cold_start:
-  ready_interval: manifest_apply_to_ready
-  first_requests: 20
-  separate_from_steady_state: true
-
 analysis:
-  bootstrap_seed: 20260920
-  confidence_level: 0.95
-  accuracy: [paired_accuracy_delta, mcnemar, paired_confidence_interval]
-  performance: [p50_latency, p95_latency, p99_latency, cpu_time_per_request]
+  accuracy: [correct_count, accuracy, percentage_point_difference]
+  performance: [mean_latency, p50_latency, p95_latency, p99_latency, achieved_rps]
+  resources: [cpu_seconds, cpu_ms_per_request, memory_average, memory_peak, throttling]
   decision_threshold: null
 
 invalidation:

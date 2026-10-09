@@ -21,10 +21,7 @@ APPROVED_DISPATCHER_SHA256 = (
 APPROVED_FEATURE_DIM = 1024
 APPROVED_EXPERT_COUNT = 3
 APPROVED_BENCHMARK_ARMS = (
-    "shufflenetv2_x0_5",
-    "mobilenetv2_x0_5",
     "resnet56",
-    "static-resnet-router",
     "dispatcher-000733",
 )
 
@@ -258,9 +255,7 @@ class BenchmarkRunManifestV1(Manifest):
                 "trace_fingerprints",
                 "arms",
                 "warmup_requests",
-                "calibration_requests",
-                "requests_per_repeat",
-                "repeats",
+                "requests_per_arm",
                 "target_rps",
                 "concurrency",
                 "seed",
@@ -278,8 +273,8 @@ class BenchmarkRunManifestV1(Manifest):
             name(trace_id, "trace id")
             digest(fingerprint)
         arms = value["arms"]
-        if not isinstance(arms, list) or len(arms) < 2:
-            raise ValueError("arms must contain at least two entries")
+        if not isinstance(arms, list) or len(arms) != 2:
+            raise ValueError("benchmark must contain exactly two arms")
         for arm in arms:
             name(arm, "benchmark arm")
         if len(arms) != len(set(arms)):
@@ -287,9 +282,9 @@ class BenchmarkRunManifestV1(Manifest):
         if arms != list(APPROVED_BENCHMARK_ARMS):
             raise ValueError("benchmark arms must use the exact approved order")
         integer(value["warmup_requests"], "warmup_requests", 0)
-        integer(value["calibration_requests"], "calibration_requests", 0)
-        integer(value["requests_per_repeat"], "requests_per_repeat")
-        integer(value["repeats"], "repeats")
+        integer(value["requests_per_arm"], "requests_per_arm")
+        if value["target_rps"] != 2.0:
+            raise ValueError("benchmark target_rps must be exactly 2")
         number(value["target_rps"], "target_rps", 1e-12)
         if value["concurrency"] != 1:
             raise ValueError("benchmark concurrency must be exactly 1")

@@ -294,3 +294,24 @@ def test_default_transport_falls_back_to_active_gcloud_login(monkeypatch) -> Non
         assert requests[0][0].get_header("Authorization") == "Bearer gcloud-token"
     finally:
         gcs._credentials.cache_clear()
+
+
+def test_default_transport_rejects_gcloud_fallback_inside_kubernetes(monkeypatch) -> None:
+    from google.auth.exceptions import DefaultCredentialsError
+
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+    monkeypatch.setattr(
+        "google.auth.default",
+        lambda **_: (_ for _ in ()).throw(DefaultCredentialsError("no ADC")),
+    )
+    monkeypatch.setattr(
+        gcs.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("gcloud fallback must not run in Kubernetes"),
+    )
+    gcs._credentials.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="unavailable inside Kubernetes"):
+            gcs._default_transport("GET", "https://storage.googleapis.com/example")
+    finally:
+        gcs._credentials.cache_clear()

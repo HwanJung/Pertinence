@@ -80,8 +80,7 @@ def _inputs(tmp_path: Path) -> dict[str, str]:
         "BENCHMARK_GSA": "benchmark-runner@pertinence-509116.iam.gserviceaccount.com",
         "EVIDENCE_ROOT": str(tmp_path / "evidence"),
         "RUN_SET_ID": "run-20260921t010203z",
-        "BENCHMARK_ID_FINAL": "final-20260921t010203z",
-        "BENCHMARK_ID_C101": "c101-20260921t010203z",
+        "BENCHMARK_ID": "comparison-20260921t010203z",
         "APPROVED_BY": "reviewer@example.com",
         "APPROVED_AT": "2026-09-21T01:02:03Z",
         "APPROVED_FINAL_LABEL_SHA256": "b" * 64,
@@ -116,7 +115,7 @@ def test_create_session_builds_private_create_only_skeleton(tmp_path: Path) -> N
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["valid"] is True
     assert receipt["cloud_calls_performed"] is False
-    assert receipt["approved_inputs"]["BENCHMARK_ID_FINAL"] == values["BENCHMARK_ID_FINAL"]
+    assert receipt["approved_inputs"]["BENCHMARK_ID"] == values["BENCHMARK_ID"]
     assert receipt["worktree_snapshot"]["sha256"] == values["WORKTREE_SNAPSHOT_SHA256"]
     assert {item["path"] for item in receipt["worktree_snapshot"]["entries"]} == {
         "tracked.txt",
@@ -125,8 +124,7 @@ def test_create_session_builds_private_create_only_skeleton(tmp_path: Path) -> N
     assert (root.stat().st_mode & 0o777) == 0o700
     assert (receipt_path.stat().st_mode & 0o777) == 0o600
     assert all((path.stat().st_mode & 0o777) == 0o700 for path in root.rglob("*") if path.is_dir())
-    assert (root / "datasets" / values["BENCHMARK_ID_FINAL"] / "publish").is_dir()
-    assert (root / "datasets" / values["BENCHMARK_ID_C101"] / "analysis").is_dir()
+    assert (root / "datasets" / values["BENCHMARK_ID"] / "publish").is_dir()
 
     with pytest.raises(ValueError, match="must not already exist"):
         create_session(values, repository_root=tmp_path / "repo")
@@ -136,7 +134,7 @@ def test_create_session_builds_private_create_only_skeleton(tmp_path: Path) -> N
     ("key", "value", "message"),
     [
         ("EXPECTED_PRINCIPAL", "__REQUIRED__", "placeholder"),
-        ("BENCHMARK_ID_C101", "final-20260921t010203z", "must be distinct"),
+        ("BENCHMARK_ID", "run-20260921t010203z", "must be distinct"),
         ("APPROVED_AT", "2026-09-21T01:02:03+00:00", "RFC3339 UTC"),
         ("DIRTY_WORKTREE_APPROVED", "yes", "exactly true"),
         ("APPROVED_FINAL_LABEL_SHA256", "0" * 64, "non-sentinel"),
