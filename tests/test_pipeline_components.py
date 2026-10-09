@@ -26,25 +26,25 @@ from onnx import TensorProto, helper, numpy_helper
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from pertinence.bundle_data import package_dataset, package_experts
+from pertinence.pipeline.bundles import package_dataset, package_experts
 from pertinence.contracts import PlatformProfile, RunConfig
-from pertinence.pipeline_cli import main
-from pertinence.pipeline_artifacts import (
+from pertinence.pipeline.cli import main
+from pertinence.pipeline.artifacts import (
     artifact_sha256,
     file_inventory,
     read_sealed,
     seal,
     write_json,
 )
-from pertinence.pipeline_cache import build_routing_dataset, load_cache, route_labels
-from pertinence.pipeline_registry import (
+from pertinence.pipeline.cache import build_routing_dataset, load_cache, route_labels
+from pertinence.pipeline.registry import (
     SQLiteRegistry,
     register_dispatcher_bundle,
     register_pareto_dispatchers,
 )
 from pertinence.runtimes.onnx import _iter_message_children
-from pertinence.pipeline_search import evaluate_final, train_dispatcher
-from pertinence.pipeline_validation import validate_run_contract
+from pertinence.pipeline.search import evaluate_final, train_dispatcher
+from pertinence.pipeline.validation import validate_run_contract
 
 
 @pytest.mark.parametrize(

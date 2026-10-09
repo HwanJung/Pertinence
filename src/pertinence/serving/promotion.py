@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..contracts.run import NormalizedRunContract
-from ..pipeline_artifacts import read_sealed, safe_path, verify_artifact
+from ..pipeline.artifacts import read_sealed, safe_path, verify_artifact
 from .contracts import PromotionManifestV1
 from .runtime import load_dispatcher_npz
 

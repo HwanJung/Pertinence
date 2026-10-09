@@ -46,7 +46,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "pipelines/pertinence/tests"]
+testpaths = ["tests"]
 addopts = "-ra"
 markers = ["integration: requires downloaded assets and PyTorch"]
 

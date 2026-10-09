@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from .serving_cli import add_commands, run_command
+from .serving.cli import add_commands, run_command
 
 
 def main(argv: list[str] | None = None) -> int:

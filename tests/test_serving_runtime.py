@@ -11,7 +11,7 @@ from pertinence.serving import (
     StaticRouter,
     load_dispatcher_npz,
 )
-from pertinence.serving_cli import _verified_model_path, _wait_for_modelcar
+from pertinence.serving.cli.common import _verified_model_path, _wait_for_modelcar
 
 
 class Client:

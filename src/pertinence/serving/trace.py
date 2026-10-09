@@ -12,7 +12,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from ..contracts.common import digest, name
-from ..pipeline_artifacts import safe_path
+from ..pipeline.artifacts import safe_path
 from ..reproducibility import canonical_json_hash, sha256_file
 from .contracts import BenchmarkTraceV1
 

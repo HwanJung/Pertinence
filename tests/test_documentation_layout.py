@@ -31,6 +31,7 @@ def test_documentation_has_one_current_structure() -> None:
         "cloud/dispatcher-training-run-report.ko.md",
         "cloud/gke-kfp-architecture-report.ko.md",
         "cloud/iac/IMPLEMENTATION_REPORT.ko.md",
+        "cloud/kfp-pipeline-summary.ko.md",
         "experiments/cifar10/docs/reproduction-plan.ko.md",
         "experiments/cifar10/docs/results.ko.md",
         "experiments/cifar10/docs/runbook.ko.md",
@@ -40,6 +41,8 @@ def test_documentation_has_one_current_structure() -> None:
         assert (ROOT / relative_path).is_file(), relative_path
     for relative_path in forbidden:
         assert not (ROOT / relative_path).exists(), relative_path
+
+    assert {path.name for path in (ROOT / "cloud").glob("*.md")} == {"README.md"}
 
 
 def test_historical_local_results_are_run_labelled() -> None:

@@ -16,9 +16,9 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import numpy as np
 
-from ..bundle_data import DatasetBundleReader, decode_image
+from ..pipeline.bundles import DatasetBundleReader, decode_image
 from ..contracts import DatasetBundle, ExpertBundle, NormalizedRunContract
-from ..pipeline_artifacts import (
+from ..pipeline.artifacts import (
     artifact_sha256,
     file_inventory,
     local_path,
@@ -28,7 +28,7 @@ from ..pipeline_artifacts import (
     verify_artifact,
     write_json,
 )
-from ..pipeline_search import validate_models, validate_search
+from ..pipeline.search import validate_models, validate_search
 from ..reproducibility import canonical_json_hash, sha256_file
 from ..runtimes.onnx import ExpertRuntime
 from .runtime import load_dispatcher_npz

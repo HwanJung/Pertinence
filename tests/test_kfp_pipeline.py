@@ -297,7 +297,7 @@ def test_retained_cifar10_submit_passes_legacy_parameters(monkeypatch, capsys):
 
 
 def test_gke_manifests_select_gcs_and_existing_kfp_runner():
-    root = Path(__file__).parents[3]
+    root = Path(__file__).parents[1]
     launcher = yaml.safe_load((root / "cloud/kfp/kfp-launcher-configmap.yaml").read_text())
     service_account = yaml.safe_load((root / "cloud/kfp/service-account.yaml").read_text())
     assert launcher["data"]["defaultPipelineRoot"].startswith("gs://")

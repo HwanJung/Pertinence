@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 import numpy as np
 
-from ..pipeline_artifacts import atomic_directory, safe_path, write_json
+from ..pipeline.artifacts import atomic_directory, safe_path, write_json
 from ..reproducibility import canonical_json_hash, sha256_file
 from .benchmark import KServeV2Predictor
 from .parity import ARMS, CIFAR101_TRACE_ID, FINAL_TRACE_ID

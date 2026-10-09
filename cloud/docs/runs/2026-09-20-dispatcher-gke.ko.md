@@ -214,6 +214,7 @@ taint에 필수 workload taint가 없으면 postcondition이 실패한다.
 ## 관련 정본
 
 - [현재 cloud 상태와 문서 색인](../../README.md)
+- [보존된 7단계 DAG와 현행 범용 pipeline](../../../pipelines/pertinence/README.md)
 - [실제 아키텍처](../architecture.ko.md)
 - [반복 운영 runbook](../runbook.ko.md)
 - [Terraform guide](../../iac/README.md)

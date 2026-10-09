@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ..pipeline_artifacts import safe_path, verify_artifact
+from ..pipeline.artifacts import safe_path, verify_artifact
 
 
 def _iter_message_children(message: object) -> Iterator[object]:

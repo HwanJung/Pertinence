@@ -18,17 +18,20 @@ and online-serving work is isolated in a roadmap and is not presented as current
 
 ```text
 src/pertinence/          # shared contracts, routing, training, metrics, and runtime code
+├── pipeline/            # portable bundle, cache, validation, search, and registry implementation
+└── serving/cli/         # promotion, trace, runtime, and benchmark command handlers
 scripts/                 # shared asset, cache, preflight, and Terraform helpers
 experiments/
 ├── method.ko.md         # paper method and project-wide reproduction assumptions
 ├── cifar10/             # runnable CIFAR-10 configuration, results, figures, and scripts
 └── cifar100/            # staged CIFAR-100 catalog work
-pipelines/pertinence/    # portable components, KFP DAG, image build, and tests
+pipelines/pertinence/    # portable components, KFP DAG, image build, and submit clients
 cloud/
 ├── docs/                # verified architecture, runbook, run records, and future roadmap
 ├── iac/                 # protected GKE Terraform state and reusable module
 └── kfp/                 # repository-owned KFP launcher and service-account manifests
 artifacts/<dataset>/     # downloaded assets, caches, compiled IR, and run outputs (ignored)
+.codex/agents/           # versioned project-specific operator boundaries
 ```
 
 Dataset-specific generated or versioned material stays below its experiment directory.
@@ -65,6 +68,10 @@ python3 -m venv .venv
 Downloaded datasets, source archives, checkpoints, caches, and raw run output belong under
 `artifacts/<dataset>/`. Network access occurs only during explicit asset preparation or cloud
 operations; model loading never downloads code or checkpoints implicitly.
+
+새 CIFAR-10 출력은 `artifacts/cifar10/` 아래의 `datasets`, `checkpoints`, `sources`, `cache`,
+`releases`, `runs/pareto`, `runs/pipeline`, `runs/kserve`로 나눈다. 이전 실행에서 생성된
+dataset 없는 artifact 경로는 보존 증거이므로 이동하거나 덮어쓰지 않는다.
 
 ## Local CIFAR-10 reproduction
 

@@ -132,16 +132,16 @@ digest를 봉인한다. CIFAR-10 raw archive와 기존 checkpoint를 변환할 �
 
 ```bash
 .venv/bin/pertinence package-dataset \
-  --source artifacts/cifar10/portable/dataset-source \
-  --output artifacts/cifar10/portable/dataset-bundle
+  --source artifacts/cifar10/runs/pipeline/dataset-source \
+  --output artifacts/cifar10/runs/pipeline/dataset-bundle
 .venv/bin/pertinence package-experts \
-  --source artifacts/cifar10/portable/expert-source \
-  --output artifacts/cifar10/portable/expert-bundle
+  --source artifacts/cifar10/runs/pipeline/expert-source \
+  --output artifacts/cifar10/runs/pipeline/expert-bundle
 
 DATASET_SHA256=$(.venv/bin/pertinence artifact-sha256 \
-  artifacts/cifar10/portable/dataset-bundle)
+  artifacts/cifar10/runs/pipeline/dataset-bundle)
 EXPERT_SHA256=$(.venv/bin/pertinence artifact-sha256 \
-  artifacts/cifar10/portable/expert-bundle)
+  artifacts/cifar10/runs/pipeline/expert-bundle)
 RUN_CONFIG_SHA256=$(.venv/bin/pertinence artifact-sha256 \
   experiments/cifar10/configs/pipeline-run.yaml)
 ```
@@ -181,7 +181,7 @@ Compiler는 `kfp==2.17.0`과 `kfp-kubernetes==2.17.x` lock을 사용한다.
   --image "$COMPONENT_IMAGE" \
   --pipeline-root "gs://${RUN_BUCKET}/pertinence/runs" \
   --cpu-threads 4 \
-  --output "artifacts/cifar10/portable/${EXPERIMENT_PREFIX}-generic-pipeline.yaml"
+  --output "artifacts/cifar10/runs/pipeline/${EXPERIMENT_PREFIX}-generic-pipeline.yaml"
 ```
 
 Compile test에서 다음을 확인한다.
@@ -200,7 +200,7 @@ namespace, `pipeline-runner`, 세 Bundle/config URI와 SHA를 전달한다.
 ```bash
 .venv/bin/python -m pipelines.pertinence.submit \
   --host http://127.0.0.1:8888 \
-  --pipeline "artifacts/cifar10/portable/${EXPERIMENT_PREFIX}-generic-pipeline.yaml" \
+  --pipeline "artifacts/cifar10/runs/pipeline/${EXPERIMENT_PREFIX}-generic-pipeline.yaml" \
   --pipeline-root "gs://${RUN_BUCKET}/pertinence/runs" \
   --namespace "$NAMESPACE" \
   --service-account "$KSA" \

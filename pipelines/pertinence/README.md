@@ -15,9 +15,11 @@ pipelines/pertinence/
 ├── Dockerfile                    # 공용 CPU component image
 ├── cloudbuild.yaml               # Artifact Registry build
 ├── requirements-components.lock # image runtime pins
-├── requirements-kfp.lock         # compiler/client pins
-└── tests/                        # component E2E와 두 IR 구조 검사
+└── requirements-kfp.lock         # compiler/client pins
 ```
+
+Component E2E와 두 IR 구조 검사는 root `tests/test_pipeline_components.py`와
+`tests/test_kfp_pipeline.py`가 소유한다.
 
 GKE, Workload Identity, launcher ConfigMap과 production 운영 절차는
 [cloud runbook](../../cloud/docs/runbook.ko.md)이 정본이다. Repository-owned Kubernetes manifest는
@@ -30,7 +32,7 @@ Python 3.11을 기준으로 pipeline/KFP 선택 의존성을 설치한다.
 ```bash
 .venv/bin/python -m pip install -r pipelines/pertinence/requirements-kfp.lock
 .venv/bin/python -m pip install -e . --no-deps
-.venv/bin/python -m pytest pipelines/pertinence/tests
+.venv/bin/python -m pytest tests/test_pipeline_components.py tests/test_kfp_pipeline.py
 .venv/bin/ruff check .
 ```
 
@@ -73,14 +75,14 @@ data를 Parquet와 `dataset.yaml`로 만들고, model별 adapter가 ONNX와 `exp
 
 ```bash
 .venv/bin/pertinence package-dataset \
-  --source artifacts/cifar10/portable/dataset-source \
-  --output artifacts/cifar10/portable/dataset-bundle
+  --source artifacts/cifar10/runs/pipeline/dataset-source \
+  --output artifacts/cifar10/runs/pipeline/dataset-bundle
 
 .venv/bin/pertinence package-experts \
-  --source artifacts/cifar10/portable/expert-source \
-  --output artifacts/cifar10/portable/expert-bundle
+  --source artifacts/cifar10/runs/pipeline/expert-source \
+  --output artifacts/cifar10/runs/pipeline/expert-bundle
 
-.venv/bin/pertinence artifact-sha256 artifacts/cifar10/portable/run.yaml
+.venv/bin/pertinence artifact-sha256 artifacts/cifar10/runs/pipeline/run.yaml
 ```
 
 `prepare-dataset-bundle`과 `export-expert-bundle`은 기존 CIFAR-10 archive와 세 checkpoint를 위한
@@ -112,7 +114,7 @@ Compile은 cluster에 접속하지 않는다.
 .venv/bin/python -m pipelines.pertinence.pipeline \
   --image "registry/name@sha256:<64-hex-digest>" \
   --pipeline-root gs://bucket/pertinence/runs \
-  --output artifacts/pipeline/pertinence-routing-training.yaml
+  --output artifacts/cifar10/runs/pipeline/pertinence-routing-training.yaml
 ```
 
 Submit 예시는 다음과 같다.
@@ -120,7 +122,7 @@ Submit 예시는 다음과 같다.
 ```bash
 .venv/bin/python -m pipelines.pertinence.submit \
   --host http://127.0.0.1:8888 \
-  --pipeline artifacts/pipeline/pertinence-routing-training.yaml \
+  --pipeline artifacts/cifar10/runs/pipeline/pertinence-routing-training.yaml \
   --pipeline-root gs://RUN_BUCKET/pertinence/runs \
   --namespace kubeflow \
   --service-account pipeline-runner \
@@ -143,7 +145,7 @@ ONNX 계약은 `validate-run`이 fail-fast로 검증하며 실패하면 downstre
 .venv/bin/python -m pipelines.pertinence.cifar10_pipeline \
   --image "registry/name@sha256:<64-hex-digest>" \
   --pipeline-root gs://bucket/pertinence/runs \
-  --output artifacts/cifar10/portable/legacy-pipeline.yaml
+  --output artifacts/cifar10/runs/pipeline/legacy-pipeline.yaml
 
 .venv/bin/python -m pipelines.pertinence.cifar10_submit --help
 ```
@@ -151,3 +153,8 @@ ONNX 계약은 `validate-run`이 fail-fast로 검증하며 실패하면 downstre
 Legacy pipeline 이름은 `pertinence-cifar10-cpu`이고 기존 10개 parameter, importer 5개와 container
 task 7개를 유지한다. 범용 pipeline 이름은 `pertinence-routing-training-cpu`다. 새 범용 경로가
 검증되어도 과거 IR, image와 GCS run artifact는 overwrite하지 않는다.
+
+2026-09-20 검증 실행은 raw archive와 세 checkpoint, RunConfig를 입력받아 dataset/expert 변환,
+계약 검증, routing cache 생성, dispatcher 탐색, final 평가, run-scoped SQLite 등록을 수행했다.
+이 일곱 단계의 실행 식별자와 보존 artifact는
+[해당 GKE 실행 기록](../../cloud/docs/runs/2026-09-20-dispatcher-gke.ko.md)에 남긴다.

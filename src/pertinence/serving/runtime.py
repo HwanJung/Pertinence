@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import numpy as np
 
-from ..pipeline_artifacts import verify_artifact
+from ..pipeline.artifacts import verify_artifact
 from .v2 import IMAGE_SHAPE, V2ProtocolError, infer_response, parse_infer_response
 
 

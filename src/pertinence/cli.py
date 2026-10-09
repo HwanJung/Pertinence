@@ -405,9 +405,9 @@ def run_final(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    from .pipeline_cli import add_commands
+    from .pipeline.cli import add_commands
     add_commands(subparsers)
-    from .serving_cli import add_commands as add_serving_commands
+    from .serving.cli import add_commands as add_serving_commands
     add_serving_commands(subparsers)
     for name in ("baseline", "fixed", "search", "final"):
         command = subparsers.add_parser(name)
@@ -423,10 +423,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if hasattr(args, "component_action"):
-            from .pipeline_cli import run_command
+            from .pipeline.cli import run_command
             return run_command(args)
         if hasattr(args, "serving_action"):
-            from .serving_cli import run_command as run_serving_command
+            from .serving.cli import run_command as run_serving_command
             return run_serving_command(args)
         config = load_config(args.config)
         seed_everything(config.seed)

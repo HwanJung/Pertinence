@@ -12,8 +12,8 @@ import pytest
 import torch
 
 from pertinence.experts import FrozenFeatureExtractor
-from pertinence.pipeline_artifacts import artifact_sha256
-from pertinence.pipeline_bootstrap import (
+from pertinence.pipeline.artifacts import artifact_sha256
+from pertinence.pipeline.bootstrap import (
     CIFAR10_CLASS_NAMES,
     EXPERT_IDS,
     build_export_expert,

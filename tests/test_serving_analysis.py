@@ -13,7 +13,7 @@ from pertinence.serving.analysis import (
 )
 from pertinence.serving.benchmark import APPROVED_ARMS
 from pertinence.serving.contracts import seal_manifest
-from pertinence.serving_cli import _run_benchmark, _write_benchmark_failure
+from pertinence.serving.cli.benchmark import _run_benchmark, _write_benchmark_failure
 
 
 def _records(samples: int = 2_000) -> list[dict[str, object]]:
