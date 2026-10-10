@@ -29,10 +29,18 @@ class InferenceModel(Protocol):
 class ExpertModel:
     """Adapt an expert runner to the public logits-only V2 contract."""
 
-    def __init__(self, model_name: str, runner: Any, *, feature_dim: int | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        runner: Any,
+        *,
+        feature_dim: int | None = None,
+        identity: dict[str, str] | None = None,
+    ) -> None:
         self.model_name = model_name
         self.runner = runner
         self.feature_dim = feature_dim
+        self.identity = dict(identity or {})
 
     def infer(
         self,
@@ -48,7 +56,10 @@ class ExpertModel:
         cpu_started = time.process_time()
         result = self.runner.predict(image, include_features=include_features)
         response = infer_response(self.model_name, result.logits, request_id=request_id)
-        response["parameters"] = {"process_cpu_seconds": time.process_time() - cpu_started}
+        response["parameters"] = {
+            **self.identity,
+            "process_cpu_seconds": time.process_time() - cpu_started,
+        }
         if include_features:
             features = np.asarray(result.features)
             if (

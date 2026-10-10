@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import signal
 import ssl
 import time
 from urllib.request import Request, urlopen
@@ -47,6 +48,13 @@ def pod_inventory(payload: bytes) -> list[dict[str, object]]:
         restart_count = sum(int(status.get("restartCount", 0)) for status in statuses)
         result.append({"name": name, "uid": uid, "restart_count": restart_count})
     return sorted(result, key=lambda item: str(item["name"]))
+
+
+def wait_for_native_sidecar_termination() -> None:
+    """Remain alive after the receipt until Kubernetes stops the native sidecar."""
+
+    while True:
+        signal.pause()
 
 
 def collect_until_done(
@@ -103,3 +111,8 @@ def collect_until_done(
             stream.flush()
             time.sleep(interval_seconds)
     Path(completed).touch(exist_ok=False)
+    # Native sidecars use restartPolicy=Always. Exiting here would make kubelet restart the
+    # collector while the load generator is sealing and publishing its output; that second
+    # process would then reject the existing evidence file. Kubelet terminates the sidecar after
+    # the main container exits, so remain idle after acknowledging collection completion.
+    wait_for_native_sidecar_termination()

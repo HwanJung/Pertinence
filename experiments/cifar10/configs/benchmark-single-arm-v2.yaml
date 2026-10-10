@@ -1,0 +1,62 @@
+schema_version: 2
+benchmark_name: cifar10-pertinence-three-structure
+seed: 20260920
+throughput_saturation_test: false
+
+arms:
+  - id: resnet56-direct
+    model_name: resnet56
+    serving_mode: direct
+  - id: dispatcher-000733-fused
+    model_name: dispatcher-000733
+    serving_mode: fused
+  - id: dispatcher-000733-distributed
+    model_name: dispatcher-000733
+    serving_mode: distributed
+
+request:
+  input_name: image
+  dtype: FP32
+  shape: [1, 3, 32, 32]
+  send_label: false
+  batch_size: 1
+  concurrency: 1
+  retry_count: 0
+  max_in_flight: 1
+
+warmup:
+  requests: 200
+  distinct_samples: true
+
+steady_state:
+  order: single_pass
+  requests: 2000
+  fixed_rps: 5
+  queue_on_missed_schedule: false
+
+runtime:
+  python: "3.11"
+  onnxruntime: 1.20.1
+  workers: 1
+  onnx_intra_op_threads: 1
+  onnx_inter_op_threads: 1
+  retry_count: 0
+
+analysis:
+  interpretation: single-pass-descriptive-only
+  logits_atol: 1.0e-6
+  performance:
+    - mean_latency
+    - p50_latency
+    - p95_latency
+    - p99_latency
+    - achieved_rps
+    - request_cpu
+    - cadvisor_cpu_per_request
+    - memory_average
+    - memory_peak
+  comparisons:
+    - direct_to_fused
+    - fused_to_distributed
+    - direct_to_distributed
+  automatic_promotion: false

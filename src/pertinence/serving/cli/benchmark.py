@@ -14,6 +14,9 @@ from typing import Any
 import yaml
 
 from ..analysis import (
+    SINGLE_ARM_POD_FRAGMENTS,
+    analyze_single_arm_records,
+    analyze_three_arm_summaries,
     analyze_records,
     derive_validity,
     request_matrix_inventory,
@@ -22,14 +25,22 @@ from ..analysis import (
 from ..benchmark import (
     APPROVED_ARMS,
     KServeV2Predictor,
+    SINGLE_ARM_IDS,
     records_to_jsonl,
     run_scheduled_arm,
+    single_arm_identity,
     validate_benchmark_config,
+    validate_single_arm_config,
     warm_up_arm,
 )
 from ..contracts import (
+    APPROVED_SINGLE_ARM_MODELS,
+    BenchmarkComparisonSummaryV2,
     BenchmarkRunManifestV1,
+    BenchmarkSingleArmRunManifestV2,
+    BenchmarkSingleArmSummaryV2,
     BenchmarkSummaryV1,
+    PromotionManifestV1,
     seal_manifest,
 )
 from ..trace import verify_trace
@@ -53,6 +64,21 @@ def add_commands(subparsers: argparse._SubParsersAction) -> None:
     run.add_argument("--timeout-seconds", type=float, default=10.0)
     run.add_argument("--seed", type=int, default=20260920)
     run.set_defaults(serving_action="benchmark-run")
+    run_single = commands.add_parser("run-single")
+    run_single.add_argument("--arm", choices=SINGLE_ARM_IDS, required=True)
+    run_single.add_argument("--endpoint", required=True)
+    run_single.add_argument("--trace", type=Path, required=True)
+    run_single.add_argument("--trace-uri")
+    run_single.add_argument("--promotion", type=Path, required=True)
+    run_single.add_argument("--config", type=Path, required=True)
+    run_single.add_argument("--output", type=Path, required=True)
+    run_single.add_argument("--output-uri")
+    run_single.add_argument("--collector-done", type=Path)
+    run_single.add_argument("--collector-completed", type=Path)
+    run_single.add_argument("--warmup", type=int, default=200)
+    run_single.add_argument("--timeout-seconds", type=float, default=10.0)
+    run_single.add_argument("--seed", type=int, default=20260920)
+    run_single.set_defaults(serving_action="benchmark-run-single")
     analyze = commands.add_parser("analyze")
     analyze.add_argument("--records", type=Path, required=True)
     analyze.add_argument("--output", type=Path, required=True)
@@ -60,6 +86,18 @@ def add_commands(subparsers: argparse._SubParsersAction) -> None:
     analyze.add_argument("--run-manifest", type=Path)
     analyze.add_argument("--environment-manifest", type=Path)
     analyze.set_defaults(serving_action="benchmark-analyze")
+    analyze_single = commands.add_parser("analyze-single")
+    analyze_single.add_argument("--records", type=Path, required=True)
+    analyze_single.add_argument("--run-manifest", type=Path, required=True)
+    analyze_single.add_argument("--environment-manifest", type=Path, required=True)
+    analyze_single.add_argument("--resource-summary", type=Path, required=True)
+    analyze_single.add_argument("--output", type=Path, required=True)
+    analyze_single.set_defaults(serving_action="benchmark-analyze-single")
+    compare = commands.add_parser("compare")
+    compare.add_argument("--summary", action="append", default=[], metavar="ARM=PATH")
+    compare.add_argument("--comparison-id", required=True)
+    compare.add_argument("--output", type=Path, required=True)
+    compare.set_defaults(serving_action="benchmark-compare")
     collect = commands.add_parser("collect-evidence")
     collect.add_argument("--output", type=Path, required=True)
     collect.add_argument("--done", type=Path, required=True)
@@ -182,7 +220,324 @@ def _signal_collector(done: Path | None, completed: Path | None) -> bool:
     return False
 
 
+def _compatibility_from_sources(
+    *, run_manifest: dict[str, Any], promotion: dict[str, Any], environment: dict[str, Any]
+) -> dict[str, Any]:
+    runtime = environment.get("runtime", {})
+    if not isinstance(runtime, dict):
+        runtime = {}
+    return {
+        "trace_fingerprint": run_manifest["trace_fingerprint"],
+        "promotion_fingerprint": run_manifest["promotion_fingerprint"],
+        "lineage": promotion.get("lineage"),
+        "runtime_image": environment.get("runtime_image", promotion.get("runtime_image")),
+        "expert_hashes": {
+            str(item["id"]): str(item["model_sha256"])
+            for item in promotion.get("experts", [])
+            if isinstance(item, dict) and "id" in item and "model_sha256" in item
+        },
+        "node_uid": environment.get("node_uid"),
+        "machine_type": environment.get("machine_type"),
+        "ort_config": environment.get("ort_config", runtime.get("ort_config")),
+    }
+
+
+def _single_arm_summary(
+    *,
+    run_manifest: dict[str, Any],
+    promotion: dict[str, Any],
+    environment: dict[str, Any],
+    resources: dict[str, Any],
+    analysis: dict[str, Any],
+    invalid_reasons: list[str],
+) -> dict[str, Any]:
+    performance = dict(analysis["performance"])
+    performance.update(
+        {
+            "cadvisor_cpu_ms_per_request": resources.get("pod_cpu_per_request_ms"),
+            "memory_working_set_average_bytes": resources.get("memory_average_bytes"),
+            "memory_working_set_peak_bytes": resources.get("memory_peak_bytes"),
+            "kubernetes_resources": resources.get("kubernetes_resources", {}),
+        }
+    )
+    body = {
+        "schema_version": 2,
+        "kind": "single-arm-summary",
+        "benchmark_id": run_manifest["benchmark_id"],
+        "run_fingerprint": run_manifest["fingerprint"],
+        "arm_id": run_manifest["arm_id"],
+        "model_name": run_manifest["model_name"],
+        "serving_mode": run_manifest["serving_mode"],
+        "valid": not invalid_reasons,
+        "invalid_reasons": sorted(set(invalid_reasons)),
+        "compatibility": _compatibility_from_sources(
+            run_manifest=run_manifest, promotion=promotion, environment=environment
+        ),
+        "accuracy": analysis["accuracy"],
+        "performance": performance,
+        "observations": analysis["observations"],
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    result = seal_manifest(body)
+    BenchmarkSingleArmSummaryV2.from_dict(result)
+    return result
+
+
+def _run_single_arm(args: argparse.Namespace) -> int:
+    config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("single-arm benchmark config must be a mapping")
+    validate_single_arm_config(config)
+    if args.warmup != 200 or args.seed != config["seed"]:
+        raise ValueError("single-arm CLI warmup/seed must exactly match the v2 config")
+    if args.trace_uri:
+        from ..gcs import download_trace
+
+        download_trace(args.trace_uri, args.trace)
+    trace, images, labels, sample_ids = verify_trace(args.trace)
+    if len(images) != 2_000:
+        raise ValueError("single-arm trace must contain exactly 2000 samples")
+    promotion = _load_promotion(args.promotion)
+    model_name, expected_identity = single_arm_identity(
+        args.arm,
+        promotion_id=str(promotion["promotion_id"]),
+        dispatcher_id=str(promotion["dispatcher"]["id"]),
+    )
+    if (args.collector_done is None) != (args.collector_completed is None):
+        raise ValueError("collector done/completed paths must be supplied together")
+    args.output.mkdir(parents=True, exist_ok=False)
+    predictor = KServeV2Predictor(args.endpoint, model_name, timeout_seconds=args.timeout_seconds)
+    invalid_reasons: list[str] = []
+    records: list[Any] = []
+    stage = "run_manifest"
+    try:
+        run_manifest = seal_manifest(
+            {
+                "schema_version": 2,
+                "benchmark_id": args.output.name,
+                "arm_id": args.arm,
+                "model_name": model_name,
+                "serving_mode": APPROVED_SINGLE_ARM_MODELS[args.arm][1],
+                "promotion_fingerprint": promotion["fingerprint"],
+                "trace_fingerprint": trace["fingerprint"],
+                "warmup_requests": 200,
+                "requests": 2_000,
+                "target_rps": 5.0,
+                "concurrency": 1,
+                "retry_count": 0,
+                "seed": args.seed,
+                "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+        )
+        BenchmarkSingleArmRunManifestV2.from_dict(run_manifest)
+        _write_json_exclusive(args.output / "run.json", run_manifest)
+        markers = args.output / "markers.jsonl"
+        with markers.open("x", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {"event": "warmup_start", "arm": args.arm, "timestamp_ns": time.time_ns()}
+                )
+                + "\n"
+            )
+        stage = "warmup"
+        warmup_invalid = warm_up_arm(
+            images=images,
+            predict=predictor,
+            expected_identity=expected_identity,
+            requests=200,
+        )
+        with markers.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {"event": "warmup_end", "arm": args.arm, "timestamp_ns": time.time_ns()}
+                )
+                + "\n"
+            )
+        if warmup_invalid:
+            invalid_reasons.append(f"warmup:{warmup_invalid}")
+        else:
+            with markers.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        {
+                            "event": "arm_start",
+                            "arm": args.arm,
+                            "repeat": 0,
+                            "timestamp_ns": time.time_ns(),
+                        }
+                    )
+                    + "\n"
+                )
+            stage = "steady_state"
+            records, invalid = run_scheduled_arm(
+                dataset_id=str(trace["trace_id"]),
+                arm=args.arm,
+                repeat=0,
+                images=images,
+                labels=labels,
+                sample_ids=sample_ids,
+                predict=predictor,
+                request_rate=5.0,
+                expected_identity=expected_identity,
+            )
+            with markers.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    json.dumps(
+                        {
+                            "event": "arm_end",
+                            "arm": args.arm,
+                            "repeat": 0,
+                            "timestamp_ns": time.time_ns(),
+                        }
+                    )
+                    + "\n"
+                )
+            if invalid:
+                invalid_reasons.append(invalid)
+        _write_jsonl(args.output / "requests.jsonl", records)
+        write_parquet([item.to_dict() for item in records], args.output / "requests.parquet")
+        stage = "collector_handshake"
+        if not _signal_collector(args.collector_done, args.collector_completed):
+            invalid_reasons.append("collector_handshake_failed")
+        inventory = request_matrix_inventory(
+            [item.to_dict() for item in records], arms=[args.arm], repeats=1, samples=2_000
+        )
+        if not inventory["complete"]:
+            invalid_reasons.append("incomplete_request_matrix")
+        resources: dict[str, Any] = {}
+        if args.collector_done is None:
+            invalid_reasons.append("collector_not_configured")
+        else:
+            stage = "resource_summary"
+            from ..analysis import summarize_pod_counters
+
+            evidence = [
+                json.loads(line)
+                for line in (args.output / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+                if line
+            ]
+            resources = summarize_pod_counters(
+                evidence,
+                request_count=len(records),
+                request_cpu_ns=sum(item.process_cpu_ns for item in records),
+                pod_fragments=SINGLE_ARM_POD_FRAGMENTS[args.arm],
+            )
+            if resources["metric_gap_count"] != 0:
+                invalid_reasons.append("metric_gap")
+        if inventory["complete"]:
+            analysis = analyze_single_arm_records(
+                [item.to_dict() for item in records], arm_id=args.arm
+            )
+            if not analysis["accuracy"]["matches_expected"]:
+                invalid_reasons.append("offline_expected_correct_mismatch")
+            if not analysis["accuracy"]["routes_match_expected"]:
+                invalid_reasons.append("offline_expected_route_mismatch")
+            runtime = config.get("runtime", {})
+            environment = {
+                "runtime_image": promotion["runtime_image"],
+                "node_uid": os.environ.get("PERTINENCE_NODE_UID"),
+                "machine_type": os.environ.get("PERTINENCE_MACHINE_TYPE"),
+                "ort_config": runtime,
+            }
+            if not environment["node_uid"] or not environment["machine_type"]:
+                invalid_reasons.append("node_identity_missing")
+            summary = _single_arm_summary(
+                run_manifest=run_manifest,
+                promotion=promotion,
+                environment=environment,
+                resources=resources,
+                analysis=analysis,
+                invalid_reasons=invalid_reasons,
+            )
+            _write_json_exclusive(args.output / "summary.json", summary)
+        _write_json_exclusive(
+            args.output / "validity.json",
+            {"valid": not invalid_reasons, "invalid_reasons": sorted(set(invalid_reasons)), "request_matrix": inventory},
+        )
+        _write_json_exclusive(args.output / "loadgen-complete.json", {"complete": True})
+        if args.output_uri:
+            stage = "gcs_publish"
+            from ..gcs import publish_create_only
+
+            publish_create_only(args.output, args.output_uri, kind="single-arm-run")
+    except Exception as error:
+        _write_benchmark_failure(args.output, stage=stage, error=error)
+        raise
+    finally:
+        predictor.close()
+    return 0 if not invalid_reasons else 2
+
+
 def _run_benchmark(args: argparse.Namespace) -> int:
+    if args.serving_action == "benchmark-run-single":
+        return _run_single_arm(args)
+    if args.serving_action == "benchmark-compare":
+        if args.output.exists() or args.output.is_symlink():
+            raise ValueError(f"output already exists: {args.output}")
+        paths = _key_values(args.summary, "summary")
+        if list(paths) != list(SINGLE_ARM_IDS):
+            raise ValueError("comparison summaries must use the exact approved arm order")
+        summaries = []
+        for arm_id, raw_path in paths.items():
+            summary = BenchmarkSingleArmSummaryV2.from_text(
+                Path(raw_path).read_text(encoding="utf-8")
+            ).to_dict()
+            if summary["arm_id"] != arm_id:
+                raise ValueError("comparison summary path is assigned to the wrong arm")
+            summaries.append(summary)
+        comparison = analyze_three_arm_summaries(summaries)
+        body = {
+            "schema_version": 2,
+            "kind": "three-arm-comparison",
+            "comparison_id": args.comparison_id,
+            "arm_summary_fingerprints": {
+                item["arm_id"]: item["fingerprint"] for item in summaries
+            },
+            **comparison,
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        sealed = seal_manifest(body)
+        BenchmarkComparisonSummaryV2.from_dict(sealed)
+        _write_json_exclusive(args.output, sealed)
+        return 0 if comparison["valid"] else 2
+    if args.serving_action == "benchmark-analyze-single":
+        if args.output.exists() or args.output.is_symlink():
+            raise ValueError(f"output already exists: {args.output}")
+        records = [
+            json.loads(line)
+            for line in args.records.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        run_manifest = BenchmarkSingleArmRunManifestV2.from_text(
+            args.run_manifest.read_text(encoding="utf-8")
+        ).to_dict()
+        environment = json.loads(args.environment_manifest.read_text(encoding="utf-8"))
+        resources = json.loads(args.resource_summary.read_text(encoding="utf-8"))
+        if not isinstance(environment, dict) or not isinstance(resources, dict):
+            raise ValueError("environment and resource summaries must be JSON objects")
+        promotion = environment.get("promotion")
+        if not isinstance(promotion, dict):
+            raise ValueError("environment manifest must embed the sealed promotion")
+        promotion = PromotionManifestV1.from_dict(promotion).to_dict()
+        if promotion["fingerprint"] != run_manifest["promotion_fingerprint"]:
+            raise ValueError("environment promotion does not match the single-arm run")
+        analysis = analyze_single_arm_records(records, arm_id=run_manifest["arm_id"])
+        validity = derive_validity(environment)
+        invalid_reasons = list(validity["invalid_reasons"])
+        if not analysis["accuracy"]["matches_expected"]:
+            invalid_reasons.append("offline_expected_correct_mismatch")
+        if not analysis["accuracy"]["routes_match_expected"]:
+            invalid_reasons.append("offline_expected_route_mismatch")
+        summary = _single_arm_summary(
+            run_manifest=run_manifest,
+            promotion=promotion,
+            environment=environment,
+            resources=resources,
+            analysis=analysis,
+            invalid_reasons=invalid_reasons,
+        )
+        _write_json_exclusive(args.output, summary)
+        return 0 if summary["valid"] else 2
     if args.serving_action == "benchmark-collect":
         from ..collector import collect_until_done
 

@@ -15,6 +15,9 @@ from pertinence.serving.gcs import download_trace, publish_create_only
 
 TRACE_URI = "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/traces/trace-1"
 OBJECT_PREFIX = "pertinence/benchmarks/traces/trace-1/"
+SINGLE_ARM_URI = (
+    "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/fused-v2/runs/run-1"
+)
 
 
 class FakeGCS:
@@ -83,6 +86,38 @@ def test_publish_is_create_only_and_reuses_identical_complete_prefix(tmp_path: P
     publish_create_only(source, TRACE_URI, kind="trace", transport=server)
     assert all(method == "GET" for method, _, _ in server.calls)
     assert all(method != "DELETE" for method, _, _ in server.calls)
+
+
+def test_publish_single_arm_run_uses_separate_create_only_root(tmp_path: Path) -> None:
+    source = _trace_source(tmp_path)
+    server = FakeGCS()
+
+    publish_create_only(source, SINGLE_ARM_URI, kind="single-arm-run", transport=server)
+
+    assert set(server.objects) == {
+        "pertinence/benchmarks/fused-v2/runs/run-1/trace.json",
+        "pertinence/benchmarks/fused-v2/runs/run-1/trace.npz",
+    }
+    assert all(method != "DELETE" for method, _, _ in server.calls)
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/runs/run-1",
+        (
+            "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/"
+            "fused-v2/runs/nested/run-1"
+        ),
+    ],
+)
+def test_publish_single_arm_run_rejects_other_or_nested_roots(
+    tmp_path: Path, destination: str
+) -> None:
+    source = _trace_source(tmp_path)
+
+    with pytest.raises(ValueError, match="one immutable ID"):
+        publish_create_only(source, destination, kind="single-arm-run", transport=FakeGCS())
 
 
 @pytest.mark.parametrize(

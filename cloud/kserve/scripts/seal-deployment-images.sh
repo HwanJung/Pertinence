@@ -12,7 +12,14 @@ output=$3
 [[ "$tag" =~ ^[A-Za-z0-9_.-]+$ && "$tag" != latest ]] || { echo "invalid build tag" >&2; exit 2; }
 [[ ! -e "$output" ]] || { echo "output already exists" >&2; exit 2; }
 
-images=(serving-runtime shufflenetv2_x0_5-modelcar mobilenetv2_x0_5-modelcar resnet56-modelcar dispatcher-000733-modelcar)
+images=(
+  serving-runtime
+  shufflenetv2_x0_5-modelcar
+  mobilenetv2_x0_5-modelcar
+  resnet56-modelcar
+  dispatcher-000733-modelcar
+  dispatcher-000733-fused-modelcar
+)
 temporary=$(mktemp -d)
 trap 'rm -rf -- "$temporary"' EXIT
 for name in "${images[@]}"; do

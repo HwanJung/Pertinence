@@ -6,10 +6,13 @@ import pytest
 from pertinence.serving import (
     DynamicRouter,
     ExpertClientError,
+    ExpertModel,
     ExpertResult,
+    FusedDynamicRouter,
     LinearDispatcherRunner,
     StaticRouter,
     load_dispatcher_npz,
+    OnnxExpertRunner,
 )
 from pertinence.serving.cli.common import _verified_model_path, _wait_for_modelcar
 
@@ -25,6 +28,21 @@ class Client:
         self.calls.append(include_features)
         if self.error:
             raise self.error
+        logits = np.full((1, 10), self.expert, dtype=np.float32)
+        features = np.arange(self.feature_dim, dtype=np.float32)[None, :] if include_features else None
+        return ExpertResult(logits, features)
+
+
+class LocalRunner(OnnxExpertRunner):
+    """Test double that preserves the fused router's concrete runner boundary."""
+
+    def __init__(self, expert: int, *, feature_dim: int = 4):
+        self.expert = expert
+        self.feature_dim = feature_dim
+        self.calls = []
+
+    def predict(self, image, *, include_features=False):
+        self.calls.append(include_features)
         logits = np.full((1, 10), self.expert, dtype=np.float32)
         features = np.arange(self.feature_dim, dtype=np.float32)[None, :] if include_features else None
         return ExpertResult(logits, features)
@@ -76,6 +94,34 @@ def test_dynamic_router_runs_only_selected_remote_expert() -> None:
     assert result.logits.tolist() == [[2.0] * 10]
 
 
+@pytest.mark.parametrize("route", [0, 1, 2])
+def test_fused_router_reuses_extractor_and_runs_only_selected_local_expert(route: int) -> None:
+    names = ["shuffle", "mobile", "resnet"]
+    runners = {name: LocalRunner(index) for index, name in enumerate(names)}
+    weight = np.zeros((3, 4), dtype=np.float32)
+    bias = np.zeros(3, dtype=np.float32)
+    bias[route] = 1
+    fused = FusedDynamicRouter(
+        "dispatcher-000733",
+        "promotion-1",
+        "dispatcher-000733",
+        names,
+        names[0],
+        runners,
+        LinearDispatcherRunner(weight, bias),
+        feature_dim=4,
+    )
+
+    response = fused.infer(image())
+
+    assert runners["shuffle"].calls == [True]
+    assert runners["mobile"].calls == ([False] if route == 1 else [])
+    assert runners["resnet"].calls == ([False] if route == 2 else [])
+    assert response["outputs"][0]["data"] == [float(route)] * 10
+    assert response["outputs"][1]["data"] == [route]
+    assert response["parameters"]["serving_mode"] == "fused"
+
+
 def test_dynamic_router_propagates_upstream_error_without_fallback_or_retry() -> None:
     dynamic, clients = router(1)
     clients["mobile"].error = ExpertClientError("timed out")
@@ -97,6 +143,15 @@ def test_static_router_has_same_single_expert_hop_and_identity() -> None:
     assert response["outputs"][1]["data"] == [2]
     assert response["parameters"]["dispatcher_id"] == "static"
     assert response["parameters"]["expert_id"] == "resnet"
+
+
+def test_direct_expert_includes_serving_mode_identity() -> None:
+    direct = ExpertModel("resnet56", Client(2), identity={"serving_mode": "direct"})
+
+    response = direct.infer(image())
+
+    assert response["model_name"] == "resnet56"
+    assert response["parameters"]["serving_mode"] == "direct"
 
 
 def test_dispatcher_loader_accepts_only_exact_fp32_npz(tmp_path) -> None:

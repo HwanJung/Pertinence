@@ -43,6 +43,8 @@ steps:
         done
         python cloud/kserve/modelcar/prepare_bundle.py dynamic-router \
           /workspace/input/evaluated /workspace/modelcars/dispatcher-000733
+        python cloud/kserve/modelcar/prepare_bundle.py fused-dynamic \
+          /workspace/input /workspace/modelcars/dispatcher-000733-fused
   - id: modelcars
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -60,6 +62,11 @@ steps:
           --tag "${_REPOSITORY}/dispatcher-000733-modelcar:${_BUILD_ID}" \
           /workspace/modelcars/dispatcher-000733
         docker push "${_REPOSITORY}/dispatcher-000733-modelcar:${_BUILD_ID}"
+        docker build --platform linux/amd64 --file cloud/kserve/modelcar/Dockerfile \
+          --build-arg "MODELCAR_BASE_IMAGE=${_MODELCAR_BASE_IMAGE}" \
+          --tag "${_REPOSITORY}/dispatcher-000733-fused-modelcar:${_BUILD_ID}" \
+          /workspace/modelcars/dispatcher-000733-fused
+        docker push "${_REPOSITORY}/dispatcher-000733-fused-modelcar:${_BUILD_ID}"
   - id: seal-deployment
     name: gcr.io/cloud-builders/docker
     entrypoint: bash

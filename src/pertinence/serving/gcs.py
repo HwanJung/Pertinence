@@ -21,6 +21,9 @@ from urllib.request import Request, urlopen
 
 TRACE_ROOT = "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/traces"
 RUN_ROOT = "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/runs"
+SINGLE_ARM_RUN_ROOT = (
+    "gs://pertinence-509116-pertinence-runs/pertinence/benchmarks/fused-v2/runs"
+)
 _STORAGE_SCOPE = "https://www.googleapis.com/auth/devstorage.read_write"
 
 Transport = Callable[[str, str, bytes | None], bytes]
@@ -270,9 +273,14 @@ def publish_create_only(
 ) -> None:
     """Create an immutable prefix, or safely reuse an identical complete prefix."""
 
-    root = TRACE_ROOT if kind == "trace" else RUN_ROOT if kind == "run" else None
+    roots = {
+        "trace": TRACE_ROOT,
+        "run": RUN_ROOT,
+        "single-arm-run": SINGLE_ARM_RUN_ROOT,
+    }
+    root = roots.get(kind)
     if root is None:
-        raise ValueError("publish kind must be trace or run")
+        raise ValueError("publish kind must be trace, run, or single-arm-run")
     prefix = _prefix(destination, root)
     source = Path(source)
     if source.is_symlink() or not source.is_dir():

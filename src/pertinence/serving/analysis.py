@@ -13,6 +13,8 @@ import tempfile
 
 import numpy as np
 
+from .contracts import APPROVED_SINGLE_ARM_IDS, APPROVED_SINGLE_ARM_MODELS
+
 
 _METRIC_LINE = re.compile(
     r"^(?P<name>[a-z_]+)\{(?P<labels>[^}]*)\}\s+"
@@ -21,6 +23,21 @@ _METRIC_LINE = re.compile(
 BENCHMARK_ARMS = ("resnet56", "dispatcher-000733")
 EXPECTED_CORRECT = {"resnet56": 1892, "dispatcher-000733": 1893}
 EXPECTED_DISPATCHER_ROUTES = [0, 640, 1360]
+SINGLE_ARM_EXPECTED_CORRECT = {
+    "resnet56-direct": 1892,
+    "dispatcher-000733-fused": 1893,
+    "dispatcher-000733-distributed": 1893,
+}
+SINGLE_ARM_POD_FRAGMENTS = {
+    "resnet56-direct": ("resnet56-direct", "expert-resnet56"),
+    "dispatcher-000733-fused": ("dispatcher-000733-fused",),
+    "dispatcher-000733-distributed": (
+        "router-dispatcher-000733",
+        "expert-shufflenet",
+        "expert-mobilenet",
+        "expert-resnet56",
+    ),
+}
 POD_FRAGMENTS = {
     "resnet56": ("expert-resnet56",),
     "dispatcher-000733": (
@@ -97,39 +114,67 @@ def request_matrix_inventory(
 
 
 def summarize_pod_counters(
-    evidence_records: Sequence[Mapping[str, Any]], *, request_count: int, request_cpu_ns: int
+    evidence_records: Sequence[Mapping[str, Any]],
+    *,
+    request_count: int,
+    request_cpu_ns: int,
+    pod_fragments: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Summarize filtered cAdvisor counters and cross-check request CPU accounting."""
 
     if request_count < 1 or len(evidence_records) < 2:
         raise ValueError("counter summary requires requests and at least two evidence samples")
-    series: dict[tuple[str, str], list[float]] = defaultdict(list)
-    timestamps = []
+    snapshots: dict[int, dict[tuple[str, str, str], float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
     for record in evidence_records:
-        timestamps.append(int(record["timestamp_ns"]))
+        timestamp = int(record["timestamp_ns"])
         for line in record.get("metrics", []):
             match = _METRIC_LINE.fullmatch(str(line))
-            if match:
-                labels = match.group("labels")
-                pod = next(
-                    (
-                        item.split("=", 1)[1].strip('"')
-                        for item in labels.split(",")
-                        if item.startswith("pod=")
-                    ),
-                    "unknown",
+            if match and match.group("name") in {
+                "container_cpu_usage_seconds_total",
+                "container_memory_working_set_bytes",
+                "container_cpu_cfs_throttled_seconds_total",
+                "container_cpu_cfs_throttled_periods_total",
+                "container_cpu_cfs_periods_total",
+            }:
+                labels = {
+                    key: raw.strip('"')
+                    for item in match.group("labels").split(",")
+                    if "=" in item
+                    for key, raw in (item.split("=", 1),)
+                }
+                pod = labels.get("pod", "unknown")
+                if pod_fragments and not any(fragment in pod for fragment in pod_fragments):
+                    continue
+                container = labels.get("container", "unknown")
+                if container in {"", "POD"}:
+                    continue
+                snapshots[timestamp][(match.group("name"), pod, container)] += float(
+                    match.group("value")
                 )
-                series[(match.group("name"), pod)].append(float(match.group("value")))
+    timestamps = sorted(snapshots)
+    if len(timestamps) < 2:
+        raise ValueError("counter summary has fewer than two serving snapshots")
+    series_keys = set().union(*(snapshot.keys() for snapshot in snapshots.values()))
     cpu_delta = 0.0
     throttled_delta = 0.0
     throttled_periods = 0.0
     periods = 0.0
-    peak_memory = 0.0
-    for (metric, _pod), values in series.items():
-        if metric == "container_memory_working_set_bytes":
-            peak_memory = max(peak_memory, max(values))
-        elif len(values) >= 2:
-            delta = values[-1] - values[0]
+    memory_totals = [
+        sum(
+            value
+            for (metric, _pod, _container), value in snapshots[timestamp].items()
+            if metric == "container_memory_working_set_bytes"
+        )
+        for timestamp in timestamps
+    ]
+    for metric, pod, container in series_keys:
+        key = (metric, pod, container)
+        if metric != "container_memory_working_set_bytes":
+            if key not in snapshots[timestamps[0]] or key not in snapshots[timestamps[-1]]:
+                raise ValueError(f"cAdvisor counter series is incomplete for {pod}/{container}")
+            delta = snapshots[timestamps[-1]][key] - snapshots[timestamps[0]][key]
             if delta < 0:
                 raise ValueError("cAdvisor counter reset detected")
             if metric == "container_cpu_usage_seconds_total":
@@ -140,7 +185,7 @@ def summarize_pod_counters(
                 throttled_periods += delta
             elif metric == "container_cpu_cfs_periods_total":
                 periods += delta
-    if cpu_delta <= 0 or peak_memory <= 0:
+    if cpu_delta <= 0 or not memory_totals or max(memory_totals) <= 0:
         raise ValueError("required cAdvisor CPU or memory series is missing")
     pod_cpu_per_request_ms = cpu_delta * 1_000 / request_count
     request_cpu_per_request_ms = request_cpu_ns / 1_000_000 / request_count
@@ -148,11 +193,12 @@ def summarize_pod_counters(
         "pod_cpu_per_request_ms": pod_cpu_per_request_ms,
         "request_cpu_per_request_ms": request_cpu_per_request_ms,
         "cpu_crosscheck_ratio": request_cpu_per_request_ms / pod_cpu_per_request_ms,
-        "memory_peak_bytes": int(peak_memory),
+        "memory_average_bytes": float(np.mean(memory_totals)) if memory_totals else 0.0,
+        "memory_peak_bytes": int(max(memory_totals)),
         "throttled_seconds": throttled_delta,
         "throttled_period_ratio": throttled_periods / periods if periods else None,
         "metric_gap_count": sum(
-            1 for left, right in zip(sorted(timestamps), sorted(timestamps)[1:]) if right - left > 7_500_000_000
+            1 for left, right in zip(timestamps, timestamps[1:]) if right - left > 7_500_000_000
         ),
     }
 
@@ -522,6 +568,323 @@ def analyze_records(
         },
         "offline_expected_matches": accuracy_matches and routes_match,
         "offline_mflops_note": "Offline MFLOPs are intentionally not treated as online CPU/latency.",
+    }
+
+
+def aggregate_pod_resources(pods: Sequence[Mapping[str, Any]]) -> dict[str, float | int]:
+    """Sum requests/limits for every regular container, including modelcar sidecars.
+
+    Values are normalized by the manifest renderer to cores and bytes before reaching
+    this contract. Init containers are deliberately excluded because they do not run
+    during the measurement window.
+    """
+
+    totals: dict[str, float | int] = {
+        "cpu_requests_cores": 0.0,
+        "cpu_limits_cores": 0.0,
+        "memory_requests_bytes": 0,
+        "memory_limits_bytes": 0,
+        "pod_count": len(pods),
+        "container_count": 0,
+        "modelcar_container_count": 0,
+    }
+    for pod in pods:
+        containers = pod.get("containers")
+        if not isinstance(containers, list) or not containers:
+            raise ValueError("each resource pod must contain regular containers")
+        for container in containers:
+            if not isinstance(container, Mapping) or not isinstance(container.get("name"), str):
+                raise ValueError("resource container is malformed")
+            resources = container.get("resources")
+            if not isinstance(resources, Mapping):
+                raise ValueError("resource container is missing requests/limits")
+            required = {
+                "cpu_requests_cores",
+                "cpu_limits_cores",
+                "memory_requests_bytes",
+                "memory_limits_bytes",
+            }
+            if set(resources) != required:
+                raise ValueError("container resource fields differ from the v2 contract")
+            for key in ("cpu_requests_cores", "cpu_limits_cores"):
+                value = float(resources[key])
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError("container CPU resource must be finite and non-negative")
+                totals[key] = float(totals[key]) + value
+            for key in ("memory_requests_bytes", "memory_limits_bytes"):
+                value = resources[key]
+                if type(value) is not int or value < 0:
+                    raise ValueError("container memory resource must be a non-negative integer")
+                totals[key] = int(totals[key]) + value
+            totals["container_count"] = int(totals["container_count"]) + 1
+            if container.get("role") == "modelcar" or "modelcar" in container["name"]:
+                totals["modelcar_container_count"] = int(totals["modelcar_container_count"]) + 1
+    return totals
+
+
+def analyze_single_arm_records(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    arm_id: str,
+    expected_samples: int = 2_000,
+) -> dict[str, object]:
+    """Validate and summarize one complete five-RPS v2 arm observation."""
+
+    if arm_id not in APPROVED_SINGLE_ARM_MODELS:
+        raise ValueError("single-arm analysis arm is not approved")
+    if expected_samples != 2_000:
+        raise ValueError("single-arm v2 analysis requires exactly 2000 requests")
+    inventory = request_matrix_inventory(records, arms=[arm_id], repeats=1, samples=expected_samples)
+    if not inventory["complete"]:
+        raise ValueError("single-arm request matrix is incomplete, duplicated, or malformed")
+    model_name, serving_mode = APPROVED_SINGLE_ARM_MODELS[arm_id]
+    ordered = sorted(records, key=lambda item: int(item["sample_index"]))
+    sample_ids = [str(item.get("sample_id", "")) for item in ordered]
+    if not all(sample_ids) or len(set(sample_ids)) != expected_samples:
+        raise ValueError("single-arm sample IDs must be complete and unique")
+    dataset_ids = {str(item.get("dataset_id", "")) for item in ordered}
+    if len(dataset_ids) != 1 or "" in dataset_ids:
+        raise ValueError("single-arm records must identify exactly one trace")
+    for item in ordered:
+        identity = item.get("identity")
+        if not isinstance(identity, Mapping):
+            raise ValueError("single-arm record identity is missing")
+        if identity.get("model_name") != model_name or identity.get("serving_mode") != serving_mode:
+            raise ValueError("single-arm response identity does not match the selected arm")
+        if serving_mode != "direct" and identity.get("dispatcher_id") != "dispatcher-000733":
+            raise ValueError("dispatcher identity does not match the approved dispatcher")
+    correct = sum(bool(item.get("correct")) for item in ordered)
+    route_counts = [sum(item.get("route") == route for item in ordered) for route in range(3)]
+    if serving_mode == "direct" and any(item.get("route") is not None for item in ordered):
+        raise ValueError("direct arm must not return a route")
+    latency_ms = np.asarray([float(item["latency_ns"]) / 1_000_000 for item in ordered])
+    request_cpu_ms = np.asarray(
+        [float(item.get("process_cpu_ns", 0)) / 1_000_000 for item in ordered]
+    )
+    if not np.isfinite(latency_ms).all() or np.any(latency_ms < 0):
+        raise ValueError("single-arm latency observations are invalid")
+    if not np.isfinite(request_cpu_ms).all() or np.any(request_cpu_ms < 0):
+        raise ValueError("single-arm request CPU observations are invalid")
+    starts = [int(item["started_ns"]) for item in ordered]
+    completed = [int(item["completed_ns"]) for item in ordered]
+    elapsed = (max(completed) - min(starts)) / 1e9
+    if elapsed <= 0:
+        raise ValueError("single-arm elapsed time is invalid")
+    observations = []
+    for item in ordered:
+        logits = np.asarray(item.get("logits"), dtype=np.float64)
+        if logits.shape != (10,) or not np.isfinite(logits).all():
+            raise ValueError("single-arm logits are invalid")
+        observations.append(
+            {
+                "sample_index": int(item["sample_index"]),
+                "sample_id": str(item["sample_id"]),
+                "prediction": int(item["prediction"]),
+                "route": None if item.get("route") is None else int(item["route"]),
+                "logits": logits.tolist(),
+            }
+        )
+    expected_routes = [0, 640, 1360] if serving_mode != "direct" else [0, 0, 0]
+    return {
+        "arm_id": arm_id,
+        "model_name": model_name,
+        "serving_mode": serving_mode,
+        "request_matrix": inventory,
+        "accuracy": {
+            "samples": expected_samples,
+            "correct": correct,
+            "value": correct / expected_samples,
+            "expected_correct": SINGLE_ARM_EXPECTED_CORRECT[arm_id],
+            "matches_expected": correct == SINGLE_ARM_EXPECTED_CORRECT[arm_id],
+            "route_counts": route_counts,
+            "expected_route_counts": expected_routes,
+            "routes_match_expected": route_counts == expected_routes,
+        },
+        "performance": {
+            "latency_ms": _quantiles(latency_ms),
+            "achieved_rps": expected_samples / elapsed,
+            "request_cpu_ms": _quantiles(request_cpu_ms),
+        },
+        "observations": observations,
+    }
+
+
+_COMPARISON_METRICS = (
+    "latency_ms.mean",
+    "latency_ms.p50",
+    "latency_ms.p95",
+    "latency_ms.p99",
+    "achieved_rps",
+    "request_cpu_ms.mean",
+    "cadvisor_cpu_ms_per_request",
+    "memory_working_set_average_bytes",
+    "memory_working_set_peak_bytes",
+)
+_COMPATIBILITY_FIELDS = (
+    "trace_fingerprint",
+    "promotion_fingerprint",
+    "lineage",
+    "runtime_image",
+    "expert_hashes",
+    "node_uid",
+    "machine_type",
+    "ort_config",
+)
+
+
+def _nested_number(value: Mapping[str, Any], dotted: str) -> float:
+    current: Any = value
+    for part in dotted.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            raise ValueError(f"summary performance is missing {dotted}")
+        current = current[part]
+    result = float(current)
+    if not math.isfinite(result) or result < 0:
+        raise ValueError(f"summary performance metric {dotted} is invalid")
+    return result
+
+
+def _comparison_observations(summary: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    observations = summary.get("observations")
+    if not isinstance(observations, list) or len(observations) != 2_000:
+        raise ValueError("comparison requires 2000 observations in every arm summary")
+    result = sorted(observations, key=lambda item: int(item["sample_index"]))
+    if [int(item["sample_index"]) for item in result] != list(range(2_000)):
+        raise ValueError("comparison observations are incomplete or duplicated")
+    return result
+
+
+def analyze_three_arm_summaries(
+    summaries: Sequence[Mapping[str, Any]],
+) -> dict[str, object]:
+    """Compare valid, compatible direct/fused/distributed single-arm summaries."""
+
+    by_arm = {str(item.get("arm_id")): item for item in summaries}
+    if len(summaries) != 3 or set(by_arm) != set(APPROVED_SINGLE_ARM_IDS):
+        raise ValueError("comparison requires exactly the three approved arm summaries")
+    reasons: list[str] = []
+    for arm_id, summary in by_arm.items():
+        expected_model, expected_mode = APPROVED_SINGLE_ARM_MODELS[arm_id]
+        if summary.get("model_name") != expected_model or summary.get("serving_mode") != expected_mode:
+            reasons.append(f"{arm_id}:identity_mismatch")
+        if summary.get("valid") is not True:
+            reasons.append(f"{arm_id}:invalid")
+    compatibility: dict[str, Any] = {}
+    for field in _COMPATIBILITY_FIELDS:
+        values = [by_arm[arm].get("compatibility", {}).get(field) for arm in APPROVED_SINGLE_ARM_IDS]
+        matched = all(value is not None and value == values[0] for value in values)
+        compatibility[field] = {"matched": matched, "value": values[0] if matched else None}
+        if not matched:
+            reasons.append(f"compatibility_mismatch:{field}")
+
+    if reasons:
+        return {
+            "valid": False,
+            "invalid_reasons": sorted(set(reasons)),
+            "compatibility": compatibility,
+            "parity": {"matched": False, "checked": False, "logit_atol": 1e-6},
+            "arms": {},
+            "comparisons": {},
+            "decision": {"classification": "invalid", "automatic_promotion": False},
+        }
+
+    fused = _comparison_observations(by_arm["dispatcher-000733-fused"])
+    distributed = _comparison_observations(by_arm["dispatcher-000733-distributed"])
+    prediction_mismatches = 0
+    route_mismatches = 0
+    max_logit_error = 0.0
+    for left, right in zip(fused, distributed):
+        if left.get("sample_id") != right.get("sample_id"):
+            reasons.append("parity:sample_order_mismatch")
+            break
+        prediction_mismatches += int(int(left["prediction"]) != int(right["prediction"]))
+        route_mismatches += int(left.get("route") != right.get("route"))
+        left_logits = np.asarray(left.get("logits"), dtype=np.float64)
+        right_logits = np.asarray(right.get("logits"), dtype=np.float64)
+        if left_logits.shape != (10,) or right_logits.shape != (10,):
+            raise ValueError("comparison logits must contain ten classes")
+        max_logit_error = max(max_logit_error, float(np.max(np.abs(left_logits - right_logits))))
+    if prediction_mismatches:
+        reasons.append("parity:prediction_mismatch")
+    if route_mismatches:
+        reasons.append("parity:route_mismatch")
+    if not math.isfinite(max_logit_error) or max_logit_error > 1e-6:
+        reasons.append("parity:logits_mismatch")
+    parity = {
+        "checked": True,
+        "prediction_mismatches": prediction_mismatches,
+        "route_mismatches": route_mismatches,
+        "max_absolute_logit_error": max_logit_error,
+        "logit_atol": 1e-6,
+        "matched": not any(reason.startswith("parity:") for reason in reasons),
+    }
+    if reasons:
+        return {
+            "valid": False,
+            "invalid_reasons": sorted(set(reasons)),
+            "compatibility": compatibility,
+            "parity": parity,
+            "arms": {},
+            "comparisons": {},
+            "decision": {"classification": "invalid", "automatic_promotion": False},
+        }
+
+    arms: dict[str, dict[str, float]] = {}
+    for arm_id in APPROVED_SINGLE_ARM_IDS:
+        performance = by_arm[arm_id].get("performance")
+        if not isinstance(performance, Mapping):
+            raise ValueError("arm summary performance is missing")
+        arms[arm_id] = {metric: _nested_number(performance, metric) for metric in _COMPARISON_METRICS}
+    pair_ids = (
+        ("direct_to_fused", "resnet56-direct", "dispatcher-000733-fused"),
+        (
+            "fused_to_distributed",
+            "dispatcher-000733-fused",
+            "dispatcher-000733-distributed",
+        ),
+        ("direct_to_distributed", "resnet56-direct", "dispatcher-000733-distributed"),
+    )
+    comparisons: dict[str, Any] = {}
+    for label, left, right in pair_ids:
+        comparisons[label] = {
+            metric: {
+                "absolute_difference": arms[right][metric] - arms[left][metric],
+                "ratio": arms[right][metric] / arms[left][metric]
+                if arms[left][metric]
+                else None,
+            }
+            for metric in _COMPARISON_METRICS
+        }
+    fused_better_distributed = all(
+        arms["dispatcher-000733-fused"][metric]
+        < arms["dispatcher-000733-distributed"][metric]
+        for metric in ("latency_ms.mean", "latency_ms.p95", "request_cpu_ms.mean")
+    )
+    fused_better_direct = all(
+        arms["dispatcher-000733-fused"][metric] <= arms["resnet56-direct"][metric]
+        for metric in ("latency_ms.mean", "latency_ms.p95", "request_cpu_ms.mean")
+    )
+    classification = (
+        "serving_efficiency_improvement"
+        if fused_better_distributed and fused_better_direct
+        else "distributed_overhead_removed"
+        if fused_better_distributed
+        else "mixed_or_negative"
+    )
+    return {
+        "valid": True,
+        "invalid_reasons": [],
+        "compatibility": compatibility,
+        "parity": parity,
+        "arms": arms,
+        "comparisons": comparisons,
+        "decision": {
+            "classification": classification,
+            "distributed_overhead_removed": fused_better_distributed,
+            "serving_efficiency_improvement": fused_better_direct,
+            "automatic_promotion": False,
+            "interpretation": "single-pass descriptive statistics only",
+        },
     }
 
 

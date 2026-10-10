@@ -1,0 +1,111 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "${BENCHMARK_JOB_NAME}"
+  namespace: pertinence-serving
+  labels:
+    app.kubernetes.io/part-of: pertinence
+    pertinence.dev/benchmark-role: single-arm-loadgen
+    pertinence.dev/arm-id: "${ARM_ID}"
+spec:
+  # Applying target manifests must never start a measurement accidentally.
+  suspend: true
+  parallelism: 1
+  completions: 1
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: pertinence
+        pertinence.dev/benchmark-role: single-arm-loadgen
+        pertinence.dev/arm-id: "${ARM_ID}"
+    spec:
+      restartPolicy: Never
+      serviceAccountName: benchmark-runner
+      nodeSelector:
+        cloud.google.com/gke-nodepool: loadgen-pool
+      tolerations:
+        - key: workload
+          operator: Equal
+          value: pertinence-loadgen
+          effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: evidence-collector
+          image: "${RUNTIME_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          args:
+            - benchmark
+            - collect-evidence
+            - --output
+            - "/work/${BENCHMARK_ID}/evidence.jsonl"
+            - --done
+            - /work/loadgen.done
+            - --completed
+            - /work/collector.done
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+          securityContext: &container-security
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+          volumeMounts:
+            - {name: work, mountPath: /work}
+      containers:
+        - name: loadgen
+          image: "${RUNTIME_IMAGE}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - benchmark
+            - run-single
+            - --arm
+            - "${ARM_ID}"
+            - --endpoint
+            - "${ARM_ENDPOINT}"
+            - --trace
+            - /work/trace
+            - --trace-uri
+            - "${BENCHMARK_TRACE_URI}"
+            - --promotion
+            - /etc/pertinence/promotion.json
+            - --config
+            - /etc/benchmark/benchmark.yaml
+            - --output
+            - "/work/${BENCHMARK_ID}"
+            - --output-uri
+            - "${BENCHMARK_OUTPUT_URI}"
+            - --collector-done
+            - /work/loadgen.done
+            - --collector-completed
+            - /work/collector.done
+          env:
+            - {name: ORT_INTRA_OP_NUM_THREADS, value: "1"}
+            - {name: ORT_INTER_OP_NUM_THREADS, value: "1"}
+            - {name: PERTINENCE_WORKERS, value: "1"}
+            - {name: PERTINENCE_NODE_UID, value: "${SERVING_NODE_UID}"}
+            - {name: PERTINENCE_MACHINE_TYPE, value: "${SERVING_MACHINE_TYPE}"}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "1", memory: 1Gi}
+          securityContext: *container-security
+          volumeMounts:
+            - {name: promotion, mountPath: /etc/pertinence, readOnly: true}
+            - {name: benchmark-config, mountPath: /etc/benchmark, readOnly: true}
+            - {name: work, mountPath: /work}
+      volumes:
+        - name: promotion
+          configMap: {name: "${PROMOTION_CONFIG_MAP_NAME}"}
+        - name: benchmark-config
+          configMap: {name: "${BENCHMARK_CONFIG_MAP_NAME}"}
+        - name: work
+          emptyDir: {}

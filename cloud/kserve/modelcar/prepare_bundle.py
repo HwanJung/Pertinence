@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
-import ast
-import math
 import struct
 import zipfile
+
+
+EXPERT_IDS = ("shufflenetv2_x0_5", "mobilenetv2_x0_5", "resnet56")
 
 
 def sha256(path: Path) -> str:
@@ -85,28 +88,36 @@ def validate_dispatcher_npz(path: Path) -> None:
                 raise ValueError(f"{name} has invalid or non-finite data")
 
 
-def select(kind: str, source: Path) -> list[str]:
-    if kind == "expert":
-        model = regular(source, "model.onnx")
-        checksum = regular(source, "model.sha256").read_text(encoding="utf-8").split()[0]
-        if checksum != sha256(model):
-            raise ValueError("model.onnx does not match model.sha256")
-        return ["model.onnx", "model.sha256"]
-    if kind != "dynamic-router":
-        raise ValueError("modelcar kind must be expert or dynamic-router")
+def expert_files(source: Path, prefix: str = "") -> list[str]:
+    model_name = f"{prefix}model.onnx"
+    checksum_name = f"{prefix}model.sha256"
+    model = regular(source, model_name)
+    checksum_file = regular(source, checksum_name)
+    checksum_parts = checksum_file.read_text(encoding="utf-8").split()
+    if (
+        len(checksum_parts) not in {1, 2}
+        or (len(checksum_parts) == 2 and checksum_parts[1].lstrip("*") != "model.onnx")
+        or checksum_parts[0] != sha256(model)
+    ):
+        raise ValueError(f"{model_name} does not match {checksum_name}")
+    return [model_name, checksum_name]
+
+
+def evaluated_files(source: Path, prefix: str = "") -> tuple[list[str], dict]:
     names = ["contract.json", "search-result.json", "final-report.json", "manifest.json"]
-    documents = {name: sealed_json(regular(source, name)) for name in names}
+    documents = {name: sealed_json(regular(source, f"{prefix}{name}")) for name in names}
     manifest, final, search = (
         documents["manifest.json"],
         documents["final-report.json"],
         documents["search-result.json"],
     )
+    contract = documents["contract.json"]
     if (
-        manifest.get("contract_fingerprint") != documents["contract.json"].get("fingerprint")
+        manifest.get("contract_fingerprint") != contract.get("fingerprint")
         or manifest.get("search_fingerprint") != search.get("fingerprint")
         or manifest.get("final_report_fingerprint") != final.get("fingerprint")
         or final.get("search_fingerprint") != search.get("fingerprint")
-        or final.get("contract_fingerprint") != documents["contract.json"].get("fingerprint")
+        or final.get("contract_fingerprint") != contract.get("fingerprint")
         or manifest.get("front_id") != search.get("front_id")
         or final.get("front_id") != search.get("front_id")
     ):
@@ -115,7 +126,7 @@ def select(kind: str, source: Path) -> list[str]:
     if len(models) != 1:
         raise ValueError("evaluated bundle must contain dispatcher-000733 exactly once")
     checkpoint_name = models[0].get("checkpoint")
-    expert_order = documents["contract.json"].get("config", {}).get("routing", {}).get("expert_ids")
+    expert_order = contract.get("config", {}).get("routing", {}).get("expert_ids")
     solutions = [
         item for item in final.get("solutions", []) if item.get("model_id") == "dispatcher-000733"
     ]
@@ -128,16 +139,50 @@ def select(kind: str, source: Path) -> list[str]:
         raise ValueError("dispatcher dimensions, expert order, or final lineage mismatch")
     if not isinstance(checkpoint_name, str) or not checkpoint_name.endswith(".npz"):
         raise ValueError("dispatcher checkpoint must be NPZ")
-    checkpoint = regular(source, checkpoint_name)
+    checkpoint_relative = f"{prefix}{checkpoint_name}"
+    checkpoint = regular(source, checkpoint_relative)
     if sha256(checkpoint) != models[0].get("checkpoint_sha256"):
         raise ValueError("dispatcher checkpoint digest mismatch")
     validate_dispatcher_npz(checkpoint)
-    return [*names, checkpoint_name]
+    return ([*(f"{prefix}{name}" for name in names), checkpoint_relative], contract)
+
+
+def select(kind: str, source: Path) -> list[str]:
+    if kind == "expert":
+        return expert_files(source)
+    if kind == "dynamic-router":
+        selected, _ = evaluated_files(source)
+        return selected
+    if kind != "fused-dynamic":
+        raise ValueError("modelcar kind must be expert, dynamic-router, or fused-dynamic")
+
+    selected, contract = evaluated_files(source, "evaluated/")
+    expert_order = contract.get("config", {}).get("routing", {}).get("expert_ids")
+    if expert_order != list(EXPERT_IDS):
+        raise ValueError("fused expert order differs from the approved evaluated contract")
+    contract_experts = contract.get("experts", {}).get("experts")
+    if not isinstance(contract_experts, list):
+        raise ValueError("evaluated contract expert inventory is missing")
+    by_id = {
+        item.get("id"): item
+        for item in contract_experts
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    if len(by_id) != len(contract_experts) or set(by_id) != set(EXPERT_IDS):
+        raise ValueError("evaluated contract experts differ from the fused expert allowlist")
+    for expert_id in EXPERT_IDS:
+        prefix = f"experts/{expert_id}/"
+        expert_selected = expert_files(source, prefix)
+        model_digest = sha256(regular(source, f"{prefix}model.onnx"))
+        if by_id[expert_id].get("model_sha256") != model_digest:
+            raise ValueError(f"{expert_id} model SHA-256 differs from evaluated contract")
+        selected.extend(expert_selected)
+    return selected
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=("expert", "dynamic-router"))
+    parser.add_argument("kind", choices=("expert", "dynamic-router", "fused-dynamic"))
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()

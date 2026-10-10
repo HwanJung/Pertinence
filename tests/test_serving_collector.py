@@ -1,6 +1,12 @@
 import json
 
-from pertinence.serving.collector import filter_cadvisor, pod_inventory
+import pytest
+
+from pertinence.serving.collector import (
+    filter_cadvisor,
+    pod_inventory,
+    wait_for_native_sidecar_termination,
+)
 
 
 def test_collector_keeps_only_required_namespace_counters() -> None:
@@ -39,3 +45,12 @@ def test_pod_inventory_keeps_uid_and_total_restart_count() -> None:
     assert pod_inventory(payload) == [
         {"name": "expert-resnet56-predictor-a", "uid": "uid-a", "restart_count": 3}
     ]
+
+
+def test_native_sidecar_waits_for_kubernetes_termination(monkeypatch) -> None:
+    def interrupted() -> None:
+        raise RuntimeError("test termination")
+
+    monkeypatch.setattr("pertinence.serving.collector.signal.pause", interrupted)
+    with pytest.raises(RuntimeError, match="test termination"):
+        wait_for_native_sidecar_termination()

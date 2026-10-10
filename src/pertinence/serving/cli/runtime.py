@@ -18,6 +18,7 @@ def add_commands(subparsers: argparse._SubParsersAction) -> None:
     expert.add_argument("--model-sha256", required=True)
     expert.add_argument("--features-name")
     expert.add_argument("--feature-dim", type=int)
+    expert.add_argument("--serving-mode", choices=("direct",))
     expert.add_argument("--host", default="0.0.0.0")
     expert.add_argument("--port", type=int, default=8080)
     expert.set_defaults(serving_action="serve-expert")
@@ -25,7 +26,11 @@ def add_commands(subparsers: argparse._SubParsersAction) -> None:
     router = commands.add_parser("router")
     router.add_argument("--promotion", type=Path, required=True)
     router.add_argument("--bundle-path", type=Path)
-    router.add_argument("--router-mode", choices=("dynamic", "static-resnet"), required=True)
+    router.add_argument(
+        "--router-mode",
+        choices=("dynamic", "fused-dynamic", "static-resnet"),
+        required=True,
+    )
     router.add_argument("--expert-url", action="append", default=[], metavar="NAME=URL")
     router.add_argument("--timeout-seconds", type=float, default=10.0)
     router.add_argument("--host", default="0.0.0.0")
@@ -41,7 +46,13 @@ def _load_dispatcher(path: Path):
 
 def run_command(args: argparse.Namespace) -> int:
     from ..http import ExpertModel, V2Application, serve
-    from ..runtime import DynamicRouter, HttpExpertClient, OnnxExpertRunner, StaticRouter
+    from ..runtime import (
+        DynamicRouter,
+        FusedDynamicRouter,
+        HttpExpertClient,
+        OnnxExpertRunner,
+        StaticRouter,
+    )
 
     if args.serving_action == "serve-expert":
         model_path = _wait_for_modelcar(
@@ -53,14 +64,24 @@ def run_command(args: argparse.Namespace) -> int:
             features_name=args.features_name,
             feature_dim=args.feature_dim,
         )
-        model = ExpertModel(args.model_name, runner, feature_dim=args.feature_dim)
+        identity = {"serving_mode": args.serving_mode} if args.serving_mode else None
+        model = ExpertModel(
+            args.model_name,
+            runner,
+            feature_dim=args.feature_dim,
+            identity=identity,
+        )
         serve(V2Application(model), args.host, args.port)
         return 0
 
     promotion = _load_promotion(args.promotion)
     experts = [item["id"] for item in promotion["experts"]]
     endpoints = _key_values(args.expert_url, "expert-url")
-    required_experts = {experts[-1]} if args.router_mode == "static-resnet" else set(experts)
+    required_experts = {
+        "static-resnet": {experts[-1]},
+        "dynamic": set(experts),
+        "fused-dynamic": set(),
+    }[args.router_mode]
     if set(endpoints) != required_experts:
         raise ValueError("expert URLs must exactly match the router's required promoted experts")
     clients = {
@@ -85,23 +106,56 @@ def run_command(args: argparse.Namespace) -> int:
 
         if args.bundle_path is None:
             raise ValueError("dynamic router requires --bundle-path")
-        verified = _wait_for_modelcar(
-            lambda: validate_promotion_bundle(promotion, args.bundle_path)
+        evaluated_path = (
+            args.bundle_path / "evaluated"
+            if args.router_mode == "fused-dynamic"
+            else args.bundle_path
         )
-        checkpoint = args.bundle_path / verified["checkpoint"]
+        verified = _wait_for_modelcar(
+            lambda: validate_promotion_bundle(promotion, evaluated_path)
+        )
+        checkpoint = evaluated_path / verified["checkpoint"]
         expected = promotion["dispatcher"]["checkpoint_sha256"]
         if sha256_file(checkpoint) != expected:
             raise ValueError("dispatcher checkpoint SHA-256 differs from promotion")
         dispatcher = _load_dispatcher(checkpoint)
-        model = DynamicRouter(
-            "dispatcher-000733",
-            promotion["promotion_id"],
-            promotion["dispatcher"]["id"],
-            experts,
-            experts[0],
-            clients,
-            dispatcher,
-            feature_dim=1024,
-        )
+        if args.router_mode == "fused-dynamic":
+            promoted = {item["id"]: item for item in promotion["experts"]}
+            runners = {
+                name: OnnxExpertRunner(
+                    _wait_for_modelcar(
+                        lambda name=name: _verified_model_path(
+                            args.bundle_path / "experts" / name / "model.onnx",
+                            promoted[name]["model_sha256"],
+                        )
+                    ),
+                    promoted[name]["model_sha256"],
+                    features_name="features" if name == experts[0] else None,
+                    feature_dim=1024 if name == experts[0] else None,
+                )
+                for name in experts
+            }
+            model = FusedDynamicRouter(
+                "dispatcher-000733",
+                promotion["promotion_id"],
+                promotion["dispatcher"]["id"],
+                experts,
+                experts[0],
+                runners,
+                dispatcher,
+                feature_dim=1024,
+            )
+        else:
+            model = DynamicRouter(
+                "dispatcher-000733",
+                promotion["promotion_id"],
+                promotion["dispatcher"]["id"],
+                experts,
+                experts[0],
+                clients,
+                dispatcher,
+                feature_dim=1024,
+                serving_mode="distributed",
+            )
     serve(V2Application(model, router=True), args.host, args.port)
     return 0

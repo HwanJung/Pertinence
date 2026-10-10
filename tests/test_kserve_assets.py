@@ -10,12 +10,106 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 import yaml
 
 
 ROOT = Path(__file__).parents[1]
 KSERVE = ROOT / "cloud" / "kserve"
+FUSED_EXPERTS = ("shufflenetv2_x0_5", "mobilenetv2_x0_5", "resnet56")
+
+
+def _sealed(value: dict) -> dict:
+    fingerprint = hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {**value, "fingerprint": fingerprint}
+
+
+def _write_json(path: Path, value: dict) -> None:
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def _fused_modelcar_source(root: Path, expert_order: tuple[str, ...] = FUSED_EXPERTS) -> Path:
+    evaluated = root / "evaluated"
+    evaluated.mkdir(parents=True)
+    expert_rows = []
+    for index, expert_id in enumerate(FUSED_EXPERTS):
+        directory = root / "experts" / expert_id
+        directory.mkdir(parents=True)
+        model = directory / "model.onnx"
+        model.write_bytes(f"onnx-{index}".encode())
+        digest = hashlib.sha256(model.read_bytes()).hexdigest()
+        (directory / "model.sha256").write_text(f"{digest}  model.onnx\n", encoding="utf-8")
+        expert_rows.append({"id": expert_id, "model_sha256": digest})
+
+    checkpoint = evaluated / "dispatcher-000733.npz"
+    np.savez(
+        checkpoint,
+        **{
+            "linear.weight": np.zeros((3, 1024), dtype=np.float32),
+            "linear.bias": np.zeros(3, dtype=np.float32),
+        },
+    )
+    checkpoint_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    contract = _sealed(
+        {
+            "config": {"routing": {"expert_ids": list(expert_order)}},
+            "experts": {"experts": expert_rows},
+        }
+    )
+    search = _sealed({"front_id": "front-1"})
+    final = _sealed(
+        {
+            "front_id": "front-1",
+            "contract_fingerprint": contract["fingerprint"],
+            "search_fingerprint": search["fingerprint"],
+            "solutions": [
+                {"model_id": "dispatcher-000733", "checkpoint_sha256": checkpoint_sha}
+            ],
+        }
+    )
+    manifest = _sealed(
+        {
+            "front_id": "front-1",
+            "contract_fingerprint": contract["fingerprint"],
+            "search_fingerprint": search["fingerprint"],
+            "final_report_fingerprint": final["fingerprint"],
+            "models": [
+                {
+                    "model_id": "dispatcher-000733",
+                    "checkpoint": checkpoint.name,
+                    "checkpoint_sha256": checkpoint_sha,
+                    "dimensions": {"D": 1024, "K": 3},
+                    "expert_order": list(expert_order),
+                }
+            ],
+        }
+    )
+    for name, value in (
+        ("contract.json", contract),
+        ("search-result.json", search),
+        ("final-report.json", final),
+        ("manifest.json", manifest),
+    ):
+        _write_json(evaluated / name, value)
+    return root
+
+
+def _prepare_modelcar(kind: str, source: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(KSERVE / "modelcar" / "prepare_bundle.py"),
+            kind,
+            str(source),
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _render_env(tmp_path: Path, *, sentinel: bool = False) -> Path:
@@ -273,3 +367,49 @@ def test_modelcar_preparer_embeds_inventory_and_rejects_extra_files(tmp_path: Pa
     )
     assert rejected.returncode != 0
     assert "allowlist" in rejected.stderr
+
+
+def test_fused_modelcar_seals_evaluated_bundle_and_three_promoted_experts(
+    tmp_path: Path,
+) -> None:
+    source = _fused_modelcar_source(tmp_path / "source")
+    result = _prepare_modelcar("fused-dynamic", source, tmp_path / "output")
+
+    assert result.returncode == 0, result.stderr
+    inventory = json.loads((tmp_path / "output/bundle/inventory.json").read_text())
+    paths = {item["path"] for item in inventory["files"]}
+    assert paths == {
+        "evaluated/contract.json",
+        "evaluated/search-result.json",
+        "evaluated/final-report.json",
+        "evaluated/manifest.json",
+        "evaluated/dispatcher-000733.npz",
+        *(f"experts/{expert_id}/model.onnx" for expert_id in FUSED_EXPERTS),
+        *(f"experts/{expert_id}/model.sha256" for expert_id in FUSED_EXPERTS),
+    }
+
+
+@pytest.mark.parametrize("mutation", ["model-hash", "checkpoint", "expert-order", "extra", "symlink"])
+def test_fused_modelcar_rejects_unsealed_or_unexpected_inputs(
+    tmp_path: Path, mutation: str
+) -> None:
+    order = tuple(reversed(FUSED_EXPERTS)) if mutation == "expert-order" else FUSED_EXPERTS
+    source = _fused_modelcar_source(tmp_path / "source", order)
+    if mutation == "model-hash":
+        model = source / "experts" / FUSED_EXPERTS[0] / "model.onnx"
+        model.write_bytes(b"different-promoted-bytes")
+        digest = hashlib.sha256(model.read_bytes()).hexdigest()
+        model.with_name("model.sha256").write_text(
+            f"{digest}  model.onnx\n", encoding="utf-8"
+        )
+    elif mutation == "checkpoint":
+        with (source / "evaluated/dispatcher-000733.npz").open("ab") as stream:
+            stream.write(b"changed")
+    elif mutation == "extra":
+        (source / "unexpected").write_text("no", encoding="utf-8")
+    elif mutation == "symlink":
+        (source / "unexpected-link").symlink_to(source / "evaluated/contract.json")
+
+    result = _prepare_modelcar("fused-dynamic", source, tmp_path / "rejected")
+
+    assert result.returncode != 0

@@ -24,6 +24,12 @@ APPROVED_BENCHMARK_ARMS = (
     "resnet56",
     "dispatcher-000733",
 )
+APPROVED_SINGLE_ARM_MODELS = {
+    "resnet56-direct": ("resnet56", "direct"),
+    "dispatcher-000733-fused": ("dispatcher-000733", "fused"),
+    "dispatcher-000733-distributed": ("dispatcher-000733", "distributed"),
+}
+APPROVED_SINGLE_ARM_IDS = tuple(APPROVED_SINGLE_ARM_MODELS)
 
 
 class PromotionConflictError(RuntimeError):
@@ -324,6 +330,150 @@ class BenchmarkSummaryV1(Manifest):
         if value["valid"] and reasons:
             raise ValueError("a valid run cannot have invalid reasons")
         for key in ("environment", "accuracy", "performance"):
+            if not isinstance(value[key], dict):
+                raise ValueError(f"{key} must be a mapping")
+        _timestamp(value["created_at"], "created_at")
+        _sealed_body(value)
+
+
+class BenchmarkSingleArmRunManifestV2(Manifest):
+    """Immutable execution settings for one arm of the three-structure experiment."""
+
+    @staticmethod
+    def validate(value: dict) -> None:
+        fields(
+            value,
+            {
+                "schema_version",
+                "benchmark_id",
+                "arm_id",
+                "model_name",
+                "serving_mode",
+                "promotion_fingerprint",
+                "trace_fingerprint",
+                "warmup_requests",
+                "requests",
+                "target_rps",
+                "concurrency",
+                "retry_count",
+                "seed",
+                "created_at",
+                "fingerprint",
+            },
+        )
+        if value["schema_version"] != 2:
+            raise ValueError("single-arm benchmark schema_version must be 2")
+        name(value["benchmark_id"], "benchmark_id")
+        arm_id = name(value["arm_id"], "arm_id")
+        if arm_id not in APPROVED_SINGLE_ARM_MODELS:
+            raise ValueError("single-arm benchmark arm is not approved")
+        expected_model, expected_mode = APPROVED_SINGLE_ARM_MODELS[arm_id]
+        if value["model_name"] != expected_model:
+            raise ValueError("arm ID and V2 model name do not match")
+        if value["serving_mode"] != expected_mode:
+            raise ValueError("arm ID and serving mode do not match")
+        digest(value["promotion_fingerprint"])
+        digest(value["trace_fingerprint"])
+        if value["warmup_requests"] != 200:
+            raise ValueError("single-arm warmup_requests must be exactly 200")
+        if value["requests"] != 2_000:
+            raise ValueError("single-arm requests must be exactly 2000")
+        if value["target_rps"] != 5.0:
+            raise ValueError("single-arm target_rps must be exactly 5")
+        if value["concurrency"] != 1 or value["retry_count"] != 0:
+            raise ValueError("single-arm benchmark requires concurrency 1 and retry_count 0")
+        integer(value["seed"], "seed", 0)
+        _timestamp(value["created_at"], "created_at")
+        _sealed_body(value)
+
+
+class BenchmarkSingleArmSummaryV2(Manifest):
+    """Sealed independently collected result for one v2 benchmark arm."""
+
+    @staticmethod
+    def validate(value: dict) -> None:
+        fields(
+            value,
+            {
+                "schema_version",
+                "kind",
+                "benchmark_id",
+                "run_fingerprint",
+                "arm_id",
+                "model_name",
+                "serving_mode",
+                "valid",
+                "invalid_reasons",
+                "compatibility",
+                "accuracy",
+                "performance",
+                "observations",
+                "created_at",
+                "fingerprint",
+            },
+        )
+        if value["schema_version"] != 2 or value["kind"] != "single-arm-summary":
+            raise ValueError("single-arm summary must use schema v2")
+        name(value["benchmark_id"], "benchmark_id")
+        digest(value["run_fingerprint"])
+        arm_id = name(value["arm_id"], "arm_id")
+        if arm_id not in APPROVED_SINGLE_ARM_MODELS:
+            raise ValueError("single-arm summary arm is not approved")
+        expected_model, expected_mode = APPROVED_SINGLE_ARM_MODELS[arm_id]
+        if (value["model_name"], value["serving_mode"]) != (expected_model, expected_mode):
+            raise ValueError("single-arm summary identity does not match its arm")
+        if type(value["valid"]) is not bool:
+            raise ValueError("valid must be boolean")
+        reasons = value["invalid_reasons"]
+        if not isinstance(reasons, list) or any(not isinstance(item, str) for item in reasons):
+            raise ValueError("invalid_reasons must be a list of strings")
+        if value["valid"] and reasons:
+            raise ValueError("a valid run cannot have invalid reasons")
+        for key in ("compatibility", "accuracy", "performance"):
+            if not isinstance(value[key], dict):
+                raise ValueError(f"{key} must be a mapping")
+        if not isinstance(value["observations"], list):
+            raise ValueError("observations must be a list")
+        _timestamp(value["created_at"], "created_at")
+        _sealed_body(value)
+
+
+class BenchmarkComparisonSummaryV2(Manifest):
+    """Sealed comparison of the three independently executed v2 arms."""
+
+    @staticmethod
+    def validate(value: dict) -> None:
+        fields(
+            value,
+            {
+                "schema_version",
+                "kind",
+                "comparison_id",
+                "arm_summary_fingerprints",
+                "valid",
+                "invalid_reasons",
+                "compatibility",
+                "parity",
+                "arms",
+                "comparisons",
+                "decision",
+                "created_at",
+                "fingerprint",
+            },
+        )
+        if value["schema_version"] != 2 or value["kind"] != "three-arm-comparison":
+            raise ValueError("comparison summary must use schema v2")
+        name(value["comparison_id"], "comparison_id")
+        fingerprints = value["arm_summary_fingerprints"]
+        if not isinstance(fingerprints, dict) or set(fingerprints) != set(APPROVED_SINGLE_ARM_IDS):
+            raise ValueError("comparison must reference exactly the three approved arms")
+        for fingerprint in fingerprints.values():
+            digest(fingerprint)
+        if type(value["valid"]) is not bool:
+            raise ValueError("valid must be boolean")
+        if not isinstance(value["invalid_reasons"], list):
+            raise ValueError("invalid_reasons must be a list")
+        for key in ("compatibility", "parity", "arms", "comparisons", "decision"):
             if not isinstance(value[key], dict):
                 raise ValueError(f"{key} must be a mapping")
         _timestamp(value["created_at"], "created_at")

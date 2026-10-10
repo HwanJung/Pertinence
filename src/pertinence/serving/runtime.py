@@ -282,11 +282,14 @@ class DynamicRouter:
         dispatcher: Dispatcher,
         *,
         feature_dim: int,
+        serving_mode: str = "distributed",
     ) -> None:
         if len(expert_order) == 0 or len(expert_order) != len(set(expert_order)):
             raise ValueError("expert_order must contain unique expert IDs")
         if extractor_id not in expert_order or set(clients) != set(expert_order):
             raise ValueError("clients and extractor must exactly match expert_order")
+        if serving_mode not in {"fused", "distributed"}:
+            raise ValueError("serving_mode must be fused or distributed")
         self.model_name = model_name
         self.promotion_id = promotion_id
         self.dispatcher_id = dispatcher_id
@@ -295,6 +298,7 @@ class DynamicRouter:
         self.clients = clients.copy()
         self.dispatcher = dispatcher
         self.feature_dim = feature_dim
+        self.serving_mode = serving_mode
 
     def predict(self, image: np.ndarray) -> RouterResult:
         image = _validate_image(image)
@@ -341,6 +345,7 @@ class DynamicRouter:
             parameters={
                 "promotion_id": self.promotion_id,
                 "dispatcher_id": self.dispatcher_id,
+                "serving_mode": self.serving_mode,
                 "expert_id": result.expert_id,
                 "extractor_seconds": result.extractor_seconds,
                 "dispatcher_seconds": result.dispatcher_seconds,
@@ -349,6 +354,44 @@ class DynamicRouter:
                 "upstream_cpu_seconds": result.upstream_cpu_seconds,
                 "process_cpu_seconds": result.router_cpu_seconds + result.upstream_cpu_seconds,
             },
+        )
+
+
+class FusedDynamicRouter(DynamicRouter):
+    """Dynamic dispatcher backed by three in-process ONNX expert sessions.
+
+    ``DynamicRouter`` owns the routing algorithm, including reuse of the extractor
+    logits for route zero.  This type narrows its collaborators to local runners
+    and gives the deployment mode an explicit identity without duplicating that
+    algorithm.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        promotion_id: str,
+        dispatcher_id: str,
+        expert_order: list[str],
+        extractor_id: str,
+        runners: dict[str, OnnxExpertRunner],
+        dispatcher: Dispatcher,
+        *,
+        feature_dim: int,
+    ) -> None:
+        if len(expert_order) != 3 or extractor_id != expert_order[0]:
+            raise ValueError("fused router requires three ordered experts with extractor at route 0")
+        if any(not isinstance(runner, OnnxExpertRunner) for runner in runners.values()):
+            raise ValueError("fused router requires OnnxExpertRunner instances")
+        super().__init__(
+            model_name,
+            promotion_id,
+            dispatcher_id,
+            expert_order,
+            extractor_id,
+            runners,
+            dispatcher,
+            feature_dim=feature_dim,
+            serving_mode="fused",
         )
 
 

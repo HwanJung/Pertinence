@@ -12,10 +12,74 @@ from urllib.parse import urlsplit
 
 import numpy as np
 
-from .contracts import APPROVED_BENCHMARK_ARMS
+from .contracts import APPROVED_BENCHMARK_ARMS, APPROVED_SINGLE_ARM_IDS, APPROVED_SINGLE_ARM_MODELS
 
 
 APPROVED_ARMS = APPROVED_BENCHMARK_ARMS
+SINGLE_ARM_IDS = APPROVED_SINGLE_ARM_IDS
+
+
+def validate_single_arm_config(value: Mapping[str, object]) -> None:
+    """Validate the separate, fixed five-RPS v2 experiment contract."""
+
+    if value.get("schema_version") != 2 or value.get("throughput_saturation_test") is not False:
+        raise ValueError("single-arm config must be schema v2 low-load mode")
+    if type(value.get("seed")) is not int or int(value["seed"]) < 0:
+        raise ValueError("single-arm config seed must be a non-negative integer")
+    arms = value.get("arms")
+    if not isinstance(arms, list) or [item.get("id") for item in arms if isinstance(item, Mapping)] != list(
+        SINGLE_ARM_IDS
+    ):
+        raise ValueError("single-arm config arms/order is not approved")
+    if len(arms) != len(SINGLE_ARM_IDS):
+        raise ValueError("single-arm config must contain exactly three arms")
+    for item in arms:
+        if not isinstance(item, Mapping):
+            raise ValueError("single-arm config arm must be a mapping")
+        arm_id = str(item.get("id", ""))
+        expected_model, expected_mode = APPROVED_SINGLE_ARM_MODELS[arm_id]
+        if item.get("model_name") != expected_model or item.get("serving_mode") != expected_mode:
+            raise ValueError("single-arm config separates arm ID from an incorrect model identity")
+    request = value.get("request")
+    if not isinstance(request, Mapping) or any(
+        request.get(key) != expected
+        for key, expected in (
+            ("send_label", False),
+            ("batch_size", 1),
+            ("concurrency", 1),
+            ("retry_count", 0),
+            ("max_in_flight", 1),
+        )
+    ):
+        raise ValueError("single-arm request policy differs from the serialized no-retry policy")
+    warmup = value.get("warmup")
+    steady = value.get("steady_state")
+    if (
+        not isinstance(warmup, Mapping)
+        or warmup.get("requests") != 200
+        or warmup.get("distinct_samples") is not True
+        or not isinstance(steady, Mapping)
+        or steady.get("requests") != 2_000
+        or steady.get("fixed_rps") != 5
+        or steady.get("order") != "single_pass"
+        or steady.get("queue_on_missed_schedule") is not False
+    ):
+        raise ValueError("single-arm warm-up or fixed-schedule policy differs")
+
+
+def single_arm_identity(
+    arm_id: str, *, promotion_id: str, dispatcher_id: str = "dispatcher-000733"
+) -> tuple[str, dict[str, str]]:
+    """Return the V2 model name and exact response identity required for an arm."""
+
+    try:
+        model_name, serving_mode = APPROVED_SINGLE_ARM_MODELS[arm_id]
+    except KeyError as error:
+        raise ValueError(f"unknown single-arm benchmark arm: {arm_id}") from error
+    identity = {"model_name": model_name, "serving_mode": serving_mode}
+    if serving_mode != "direct":
+        identity.update({"promotion_id": promotion_id, "dispatcher_id": dispatcher_id})
+    return model_name, identity
 
 
 def validate_benchmark_config(value: Mapping[str, object]) -> None:
@@ -137,7 +201,7 @@ class KServeV2Predictor:
             "model_version": str(value.get("model_version", "")),
             **{
                 key: str(parameters[key])
-                for key in ("promotion_id", "dispatcher_id", "expert_id")
+                for key in ("promotion_id", "dispatcher_id", "expert_id", "serving_mode")
                 if key in parameters
             },
         }
