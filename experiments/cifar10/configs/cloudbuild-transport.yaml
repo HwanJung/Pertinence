@@ -1,0 +1,68 @@
+timeout: 3600s
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _REPOSITORY: asia-northeast3-docker.pkg.dev/pertinence-509116/pertinence
+  _BUILD_ID: transport-replace
+  _PYTHON_BASE_IMAGE: python:3.11-slim@sha256:174bec68e0451bffabbb08c7d5d21c6b253f772d81d52b9558af97bb3159b761
+  _MODELCAR_BASE_IMAGE: busybox:1.37.0@sha256:7a3ebe5bfd1a4a19797d20b0c0bb39d44393e9a03fd852c0865b0f540d868df0
+  _BUILD_INPUT_MANIFEST_URI: gs://pertinence-509116-pertinence-runs/pertinence/builds/fused-20261009t152737z-build/build-input-manifest.json#1791559835840032
+steps:
+  - id: immutable-inputs
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: python3
+    args:
+      - cloud/kserve/scripts/build_inputs.py
+      - fetch
+      - --manifest-uri
+      - '${_BUILD_INPUT_MANIFEST_URI}'
+      - --manifest-output
+      - /workspace/build-input-manifest.json
+      - --output
+      - /workspace/input
+      - --receipt
+      - /workspace/build-input-receipt.json
+  - id: runtime
+    name: gcr.io/cloud-builders/docker
+    args:
+      - buildx
+      - build
+      - --load
+      - --platform
+      - linux/amd64
+      - --file
+      - cloud/kserve/runtime/Dockerfile
+      - --build-arg
+      - PYTHON_BASE_IMAGE=${_PYTHON_BASE_IMAGE}
+      - --tag
+      - ${_REPOSITORY}/serving-runtime:${_BUILD_ID}
+      - .
+  - id: hybrid-context
+    name: ${_PYTHON_BASE_IMAGE}
+    entrypoint: python
+    args:
+      - cloud/kserve/modelcar/prepare_bundle.py
+      - hybrid-dynamic
+      - /workspace/input
+      - /workspace/hybrid
+  - id: hybrid-modelcar
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --platform
+      - linux/amd64
+      - --file
+      - cloud/kserve/modelcar/Dockerfile
+      - --build-arg
+      - MODELCAR_BASE_IMAGE=${_MODELCAR_BASE_IMAGE}
+      - --tag
+      - ${_REPOSITORY}/dispatcher-000733-hybrid-modelcar:${_BUILD_ID}
+      - /workspace/hybrid
+images:
+  - ${_REPOSITORY}/serving-runtime:${_BUILD_ID}
+  - ${_REPOSITORY}/dispatcher-000733-hybrid-modelcar:${_BUILD_ID}
+artifacts:
+  objects:
+    location: gs://pertinence-509116-pertinence-runs/pertinence/builds/$BUILD_ID/
+    paths: [build-input-manifest.json, build-input-receipt.json]

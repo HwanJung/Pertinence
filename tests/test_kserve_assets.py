@@ -413,3 +413,16 @@ def test_fused_modelcar_rejects_unsealed_or_unexpected_inputs(
     result = _prepare_modelcar("fused-dynamic", source, tmp_path / "rejected")
 
     assert result.returncode != 0
+
+
+def test_hybrid_modelcar_contains_only_local_extractor(tmp_path):
+    source = _fused_modelcar_source(tmp_path / "source")
+    output = tmp_path / "hybrid"
+    completed = subprocess.run(
+        [sys.executable, str(KSERVE / "modelcar" / "prepare_bundle.py"),
+         "hybrid-dynamic", str(source), str(output)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert (output / "bundle" / "experts" / FUSED_EXPERTS[0] / "model.onnx").is_file()
+    assert not (output / "bundle" / "experts" / FUSED_EXPERTS[1]).exists()
+    assert not (output / "bundle" / "experts" / FUSED_EXPERTS[2]).exists()

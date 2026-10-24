@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="이미지 한 장으로 확인하는 PERTINENCE 동적 모델 선택">
+  <title>PERTINENCE · 이미지 분류 시연</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header><a href="/" class="wordmark">PERTINENCE<span> / LIVE DEMO</span></a>
+    <span class="status" id="health" role="status">서비스 확인 중</span></header>
+  <main>
+    <div class="intro"><p class="eyebrow">CIFAR-10 · HYBRID ROUTING</p>
+      <h1>이미지 하나,<br><span>알맞은 모델의 선택.</span></h1>
+      <p>이미지를 올리면 Dispatcher가 분류에 사용할 expert를 선택합니다.<br>
+        Kubernetes에서 실행되는 실제 추론 경로와 결과를 확인하세요.</p>
+    </div>
+    <div class="workspace">
+      <section class="panel upload-panel" aria-labelledby="upload-title">
+        <div class="section-heading"><h2 id="upload-title">01 <span>이미지 업로드</span></h2>
+          <span class="tag">JPEG / PNG</span></div>
+        <label class="dropzone" id="dropzone" for="file">
+          <input type="file" id="file" accept="image/jpeg,image/png">
+          <img id="preview" alt="선택한 이미지 미리보기" hidden>
+          <span id="placeholder"><span class="upload-icon" aria-hidden="true">↑</span>
+            <strong>이미지를 끌어 놓으세요</strong><span>또는 클릭해서 파일 선택 · 최대 5MiB</span></span>
+        </label>
+        <div class="file-info"><span id="filename">선택한 이미지 없음</span>
+          <button id="clear" class="text-button" type="button" hidden>지우기</button></div>
+        <button class="primary" id="run" type="button" disabled>이미지 분류하기 <span>↗</span></button>
+        <p class="message" id="message" role="status" aria-live="polite"></p>
+        <div class="notice"><strong>이 모델이 구분하는 10가지</strong>
+          <p>비행기 · 자동차 · 새 · 고양이 · 사슴 · 개 · 개구리 · 말 · 배 · 트럭</p>
+          <p>입력 이미지는 32×32 RGB로 변환됩니다. 다른 대상의 사진도 이 10개 중 하나로 분류됩니다.</p>
+        </div>
+      </section>
+      <section class="panel result-panel" aria-labelledby="result-title">
+        <div class="section-heading"><h2 id="result-title">02 <span>분류 결과</span></h2>
+          <span class="tag">dispatcher-000733</span></div>
+        <div id="empty" class="empty-result"><span aria-hidden="true">◎</span>
+          <h3>어떤 모델이 선택될까요?</h3><p>이미지를 업로드하고 분류를 실행하세요.</p></div>
+        <div id="result" hidden>
+          <div class="prediction"><div><p class="eyebrow">PREDICTION</p>
+            <h3 id="prediction"></h3><p id="class-name"></p></div>
+            <div class="score"><strong id="score"></strong><span>softmax 점수</span></div></div>
+          <div id="top-k" class="top-k" aria-label="상위 3개 분류 점수"></div>
+          <p class="score-note">softmax 점수는 모델 출력의 상대 점수입니다.</p>
+          <div class="routing"><p class="eyebrow">INFERENCE PATH</p>
+            <div class="router-boundary"><p class="eyebrow">Router 내부 · ShuffleNet · Dispatcher</p><div class="flow"><span>ShuffleNet<br><small>특징 추출</small></span><b>→</b>
+              <span>Dispatcher<br><small>expert 선택</small></span></div></div>
+            <div class="experts" aria-label="선택 가능한 expert">
+              <div data-expert="shufflenetv2_x0_5">ShuffleNet<small>내부 결과 재사용</small></div>
+              <div data-expert="mobilenetv2_x0_5">MobileNet<small>외부 호출 · V2 ×0.5</small></div>
+              <div data-expert="resnet56">ResNet<small>외부 호출 · 56</small></div>
+            </div><p id="route-note"></p>
+          </div>
+          <div class="timings"><div><span>API 전체</span><strong id="total-time"></strong></div>
+            <div><span>특징 추출</span><strong id="extractor-time"></strong></div>
+            <div><span>모델 선택</span><strong id="dispatcher-time"></strong></div>
+            <div><span>선택 expert</span><strong id="expert-time"></strong></div></div>
+          <p class="request-id" id="request-id"></p>
+        </div>
+      </section>
+    </div>
+    <footer><span>PERTINENCE / CIFAR-10</span><span>업로드 이미지는 저장하지 않습니다.</span></footer>
+  </main>
+</body>
+</html>

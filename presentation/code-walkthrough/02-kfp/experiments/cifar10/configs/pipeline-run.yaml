@@ -1,0 +1,40 @@
+schema_version: 1
+run_name: cifar10-gke-cpu
+seed: 20260824
+
+routing:
+  expert_ids:
+    - shufflenetv2_x0_5
+    - mobilenetv2_x0_5
+    - resnet56
+  feature_extractor_id: shufflenetv2_x0_5
+  fallback_expert_id: shufflenetv2_x0_5
+  cost_key: mflops
+  require_cost_sorted: true
+
+split:
+  search_size: 8000
+  final_size: 2000
+  seed: 20260824
+
+dispatcher:
+  epochs: 20
+  batch_size: 256
+  optimizer: adam
+  learning_rate: 0.001
+  weight_decay: 0.0
+  ens_beta: 0.9999
+  normalize_class_weights: mean_one
+
+nsga2:
+  population_size: 50
+  generations: 50
+  crossover: SBX
+  crossover_eta: 20
+  crossover_probability: 0.9
+  mutation: polynomial
+  mutation_eta: 25
+  mutation_probability: null
+  penalty_min: 0.0
+  penalty_max: 100.0
+  weighting_schemes: [INS, ISNS, ENS]

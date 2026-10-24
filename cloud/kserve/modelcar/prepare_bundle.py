@@ -153,7 +153,7 @@ def select(kind: str, source: Path) -> list[str]:
     if kind == "dynamic-router":
         selected, _ = evaluated_files(source)
         return selected
-    if kind != "fused-dynamic":
+    if kind not in {"fused-dynamic", "hybrid-dynamic"}:
         raise ValueError("modelcar kind must be expert, dynamic-router, or fused-dynamic")
 
     selected, contract = evaluated_files(source, "evaluated/")
@@ -170,7 +170,7 @@ def select(kind: str, source: Path) -> list[str]:
     }
     if len(by_id) != len(contract_experts) or set(by_id) != set(EXPERT_IDS):
         raise ValueError("evaluated contract experts differ from the fused expert allowlist")
-    for expert_id in EXPERT_IDS:
+    for expert_id in (EXPERT_IDS[:1] if kind == "hybrid-dynamic" else EXPERT_IDS):
         prefix = f"experts/{expert_id}/"
         expert_selected = expert_files(source, prefix)
         model_digest = sha256(regular(source, f"{prefix}model.onnx"))
@@ -182,7 +182,7 @@ def select(kind: str, source: Path) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("kind", choices=("expert", "dynamic-router", "fused-dynamic"))
+    parser.add_argument("kind", choices=("expert", "dynamic-router", "fused-dynamic", "hybrid-dynamic"))
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
@@ -190,13 +190,15 @@ def main() -> int:
         parser.error("destination already exists")
     try:
         selected = select(args.kind, args.source)
+        allowed = (select("fused-dynamic", args.source)
+                   if args.kind == "hybrid-dynamic" else selected)
         actual = {
             path.relative_to(args.source).as_posix()
             for path in args.source.rglob("*")
             if path.is_file() or path.is_symlink()
         }
-        if actual != set(selected):
-            raise ValueError(f"bundle violates file allowlist: {sorted(actual - set(selected))}")
+        if actual != set(allowed):
+            raise ValueError(f"bundle violates file allowlist: {sorted(actual - set(allowed))}")
         bundle = args.destination / "bundle"
         bundle.mkdir(parents=True)
         inventory = []

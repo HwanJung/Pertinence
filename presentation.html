@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PERTINENCE · 프로젝트 기술 발표</title>
+  <style>
+    :root { --ink:#172b35; --muted:#647680; --teal:#087f78; --light:#edf7f5; --orange:#d66b36; --line:#dce5e7; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#e4eaed; color:var(--ink); font-family:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif; word-break:keep-all; }
+    .viewport { position:fixed; inset:0 0 64px; display:grid; place-items:center; overflow:hidden; }
+    .stage { width:1280px; height:720px; flex-shrink:0; }
+    .slide { width:1280px; height:720px; background:#fff; padding:38px 60px 26px; display:none; flex-direction:column; position:relative; box-shadow:0 12px 64px #233b4b18; }
+    .slide.active { display:flex; }
+    .topline { display:flex; justify-content:space-between; color:var(--teal); font-size:13px; letter-spacing:1.6px; font-weight:700; }
+    h1 { font-size:36px; line-height:1.3; letter-spacing:-1.7px; margin:20px 0 10px; font-weight:750; }
+    .subtitle { margin:0 0 24px; font-size:18px; color:var(--muted); line-height:1.55; }
+    h2 { font-size:20px; margin:0 0 16px; letter-spacing:-.5px; }
+    p { line-height:1.6; margin:0; }
+    .body { flex:1; min-height:0; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+    .panel { border:1px solid var(--line); border-radius:16px; padding:24px; }
+    .soft { background:var(--light); border-color:transparent; }
+    .muted { color:var(--muted); }
+    .small { font-size:14px; }
+    .tag { display:inline-block; padding:6px 11px; border-radius:6px; background:var(--light); color:var(--teal); font-size:14px; font-weight:700; }
+    .takeaway { background:var(--light); border-left:4px solid var(--teal); padding:15px 20px; margin-top:20px; font-size:20px; line-height:1.5; font-weight:650; }
+    .footer { display:flex; align-items:end; justify-content:space-between; gap:24px; margin-top:18px; color:var(--muted); font-size:12px; line-height:1.5; }
+    .footer span:first-child { max-width:1050px; }
+    .page { white-space:nowrap; font-variant-numeric:tabular-nums; }
+    table { width:100%; border-collapse:collapse; font-size:18px; }
+    th { color:var(--muted); font-size:14px; font-weight:600; text-align:left; padding:12px 12px; border-bottom:1px solid var(--line); }
+    td { padding:15px 12px; border-bottom:1px solid var(--line); line-height:1.35; }
+    tr:last-child td { border-bottom:0; }
+    .num { text-align:right; font-variant-numeric:tabular-nums; }
+    .em { color:var(--teal); font-weight:750; }
+    .orange { color:var(--orange); }
+    .flow { display:flex; align-items:stretch; gap:10px; }
+    .node { flex:1; text-align:center; padding:18px 10px; background:var(--light); border:1px solid #cde5e1; border-radius:10px; font-size:17px; font-weight:650; }
+    .arrow { display:grid; place-items:center; color:#80959c; font-size:22px; }
+    .flow.compact .node { padding:12px 10px; font-size:16px; }
+    .node.dark { background:var(--teal); color:#fff; border-color:var(--teal); }
+    .node small { display:block; font-size:12px; font-weight:400; margin-top:7px; opacity:.8; }
+    .stack { display:flex; flex-direction:column; gap:16px; }
+    .stat { font-size:52px; line-height:1.1; font-weight:750; letter-spacing:-2px; font-variant-numeric:tabular-nums; }
+    .stat small { font-size:21px; letter-spacing:0; }
+    .label { font-size:16px; color:var(--muted); margin-bottom:10px; }
+    .barrow { display:grid; grid-template-columns:190px 1fr 102px; align-items:center; gap:16px; margin-bottom:23px; font-size:17px; }
+    .track { height:29px; background:#f0f3f4; border-radius:5px; overflow:hidden; }
+    .bar { height:100%; width:var(--w); background:var(--teal); border-radius:5px; }
+    .bar.gray { background:#a9b8be; }
+    .bar.warm { background:var(--orange); }
+    .barrow strong { text-align:right; font-variant-numeric:tabular-nums; }
+    .bullet { position:relative; padding-left:19px; margin-bottom:14px; font-size:18px; line-height:1.6; }
+    .bullet::before { content:""; position:absolute; left:0; top:12px; width:6px; height:6px; background:var(--teal); border-radius:50%; }
+    .pipeline { margin-top:18px; }
+    .pipeline th { padding:8px 12px; }
+    .pipeline td { padding:10px 12px; font-size:16px; }
+    code { font-family:ui-monospace,Consolas,monospace; font-size:.88em; }
+    .splitbar { display:flex; height:35px; border-radius:6px; overflow:hidden; margin:14px 0 10px; color:#fff; font-size:14px; text-align:center; line-height:35px; }
+    .splitbar .mobile { width:32%; background:#66a99f; }
+    .splitbar .resnet { width:68%; background:var(--teal); }
+    .controls { position:fixed; bottom:0; left:0; right:0; height:64px; display:flex; justify-content:center; align-items:center; gap:18px; background:#e4eaed; }
+    button { border:1px solid #bac8ce; background:#fff; border-radius:7px; padding:8px 14px; color:var(--ink); cursor:pointer; font:inherit; font-size:14px; }
+    button:hover { background:var(--light); }
+    button:focus-visible, a:focus-visible { outline:3px solid var(--teal); outline-offset:3px; }
+    button:disabled { opacity:.35; cursor:default; }
+    .dots { display:flex; gap:9px; }
+    .dot { padding:0; width:9px; height:9px; border:0; background:#afbec5; border-radius:50%; }
+    .dot[aria-current="step"] { background:var(--teal); }
+    .hint { color:var(--muted); font-size:12px; }
+    .noscript { position:fixed; bottom:0; background:white; padding:12px; }
+    @media print {
+      @page { size:1280px 720px; margin:0; }
+      html, body { margin:0; background:#fff; width:1280px; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+      .viewport { position:static; display:block; overflow:visible; }
+      .stage { width:1280px !important; height:auto !important; transform:none !important; }
+      .slide { display:flex !important; box-shadow:none; break-after:page; break-inside:avoid; }
+      .slide:last-child { break-after:auto; }
+      .controls, .noscript { display:none; }
+    }
+  </style>
+</head>
+<body>
+<main class="viewport" aria-label="프로젝트 발표자료">
+<div class="stage">
+  <section class="slide active" aria-labelledby="title-1">
+    <div class="topline"><span>PERTINENCE</span><span>ENVIRONMENT</span></div>
+    <h1 id="title-1">개발환경</h1>
+    <p class="subtitle">GKE 위에서 학습을 자동화하고, CPU 기반 온라인 추론 성능을 검증했습니다.</p>
+    <div class="body">
+      <div class="grid">
+        <div class="panel soft">
+          <span class="tag">Google Kubernetes Engine</span>
+          <h2 style="margin-top:20px">학습부터 서빙까지</h2>
+          <div class="stack">
+            <div class="node">Kubeflow Pipelines<small>데이터 처리 · Dispatcher 학습 · 평가</small></div>
+            <div class="node dark">KServe<small>모델 배포 · 온라인 추론 실험</small></div>
+          </div>
+          <p class="small muted" style="margin-top:20px">GPU 없이 CPU 사용 · 역할별 노드 풀 분리</p>
+        </div>
+        <div class="panel">
+          <h2>자원 경쟁을 줄인 실험 환경</h2>
+          <table>
+            <thead><tr><th>노드 풀</th><th>머신</th><th>역할</th></tr></thead>
+            <tbody>
+              <tr><td>시스템</td><td>e2-standard-4</td><td>KFP 운영</td></tr>
+              <tr><td>학습</td><td>n2-standard-8</td><td>학습·평가</td></tr>
+              <tr><td>추론</td><td>n2-standard-8</td><td>모델 서빙</td></tr>
+              <tr><td>부하 생성</td><td>n2-standard-4</td><td>요청·측정</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>동일한 추론·부하 생성 노드를 사용하고 클러스터 내부에서 요청 전송</span><span class="page">01 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-2">
+    <div class="topline"><span>PERTINENCE</span><span>TRAINING PIPELINE</span></div>
+    <h1 id="title-2">동적 모델 선택 및 학습 자동화</h1>
+    <p class="subtitle">CIFAR-10 · Expert는 고정하고 Dispatcher를 학습 · NSGA-II로 정확도–연산량 절충 탐색</p>
+    <div class="body">
+      <div class="flow compact">
+        <div class="node">입력 이미지</div><span class="arrow" aria-hidden="true">→</span>
+        <div class="node">특징 추출</div><span class="arrow" aria-hidden="true">→</span>
+        <div class="node dark">Dispatcher</div><span class="arrow" aria-hidden="true">→</span>
+        <div class="node">선택된 Expert</div><span class="arrow" aria-hidden="true">→</span><div class="node">분류 결과</div>
+      </div>
+      <p class="small muted" style="margin:10px 0 19px">Expert: ShuffleNetV2 x0.5 / MobileNetV2 x0.5 / ResNet56</p>
+      <div class="flow compact">
+        <div class="node">입력 번들·설정<small>Dataset / Expert / RunConfig</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="node">KFP Importer<small>외부 Artifact 등록</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="node dark">5개 계산 컴포넌트<small>검증 → 캐시 → 학습 → 평가 → 등록</small></div><span class="arrow" aria-hidden="true">→</span>
+        <div class="node">GCS<small>산출물·결과 저장</small></div>
+      </div>
+      <table class="pipeline">
+        <thead><tr><th style="width:37%">계산 컴포넌트 · 실행 순서</th><th>역할</th></tr></thead>
+        <tbody>
+          <tr><td><code>01 &nbsp;validate-run</code></td><td>입력 검증 및 데이터 분할</td></tr>
+          <tr><td><code>02 &nbsp;build-routing-dataset</code></td><td>특징·예측·Routing 정답 캐시 생성</td></tr>
+          <tr><td><code>03 &nbsp;train-dispatcher</code></td><td>Dispatcher 학습 및 Pareto 후보 탐색</td></tr>
+          <tr><td><code>04 &nbsp;evaluate-final</code></td><td>최종 데이터에서 후보 성능 평가</td></tr>
+          <tr><td><code>05 &nbsp;register-dispatchers</code></td><td>모델 정보 및 평가 결과 등록</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="footer"><span>해시 검증 · 고정 seed · Train / Search / Final 분리로 재현성 확보</span><span class="page">02 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-3">
+    <div class="topline"><span>PERTINENCE</span><span>INITIAL COMPARISON</span></div>
+    <h1 id="title-3">연산량은 줄었지만 응답시간은 증가</h1>
+    <p class="subtitle">Warm-up 200건 → 평가 2,000건 · 5 RPS · 동시 요청 1 · 재시도 없음</p>
+    <div class="body">
+      <div class="grid">
+        <div class="panel">
+          <h2>요청 처리 구조</h2>
+          <span class="tag">Direct</span>
+          <p style="margin:12px 0 24px;font-size:22px">이미지 → ResNet56</p>
+          <span class="tag">Distributed</span>
+          <p style="margin-top:12px;font-size:20px">Router → 원격 특징 추출<br>→ Dispatcher → 원격 Expert</p>
+          <p class="small muted" style="margin-top:22px">Direct: 내부 RPC 0회<br>Distributed: 내부 RPC 2회</p>
+        </div>
+        <div class="panel">
+          <table>
+            <thead><tr><th>지표</th><th class="num">Direct</th><th class="num">Distributed</th></tr></thead>
+            <tbody>
+              <tr><td>정확도</td><td class="num">94.60%</td><td class="num">94.65%</td></tr>
+              <tr><td>MFLOPs</td><td class="num">251.50</td><td class="num em">210.73</td></tr>
+              <tr><td>평균 지연</td><td class="num em">10.379ms</td><td class="num orange">25.845ms</td></tr>
+              <tr><td>p95</td><td class="num">12.646ms</td><td class="num">30.379ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="takeaway">연산량 16.2% 감소에도 지연 증가 · 정확도 차이 0.05%p는 정답 1건</div>
+    </div>
+    <div class="footer"><span>Predictor 자원: Direct 1 Pod·1 CPU·1 GiB / Distributed 4 Pod·총 4 CPU·4 GiB</span><span class="page">03 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-4">
+    <div class="topline"><span>PERTINENCE</span><span>BOTTLENECK ANALYSIS</span></div>
+    <h1 id="title-4">모델 계산보다 큰 데이터 변환 비용</h1>
+    <p class="subtitle">구간별 계측을 추가한 별도 실행으로 분산 추론의 병목을 확인했습니다.</p>
+    <div class="body">
+      <div class="grid" style="grid-template-columns:1.35fr 1fr">
+        <div class="panel">
+          <h2>요청당 CPU 시간</h2>
+          <div style="margin-top:40px">
+            <div class="barrow" style="grid-template-columns:130px 1fr 100px"><span>직렬화·역직렬화</span><div class="track"><div class="bar warm" style="--w:97.87%"></div></div><strong>9.787ms</strong></div>
+            <div class="barrow" style="grid-template-columns:130px 1fr 100px"><span>모델 실행</span><div class="track"><div class="bar" style="--w:39.39%"></div></div><strong>3.939ms</strong></div>
+          </div>
+          <p class="stat orange" style="margin-top:30px">2.5<small>배</small></p>
+          <p class="muted" style="margin-top:8px">모델 실행 대비 데이터 변환 CPU 시간</p>
+        </div>
+        <div class="panel soft">
+          <h2>요청마다 반복되는 작업</h2>
+          <p class="bullet">이미지·특징을 JSON 숫자 문자열로 변환하고 다시 해석</p>
+          <p class="bullet">내부 HTTP 호출 <strong>2회</strong><br>새 연결 생성 <strong>2회</strong></p>
+          <p class="bullet">내부 전송 본문 합계 <strong>약 141KB</strong></p>
+          <p class="small muted">이 실행의 평균 응답시간: 29.853ms</p>
+        </div>
+      </div>
+      <div class="takeaway">모델 연산뿐 아니라 데이터 변환과 연결 처리도 최적화 대상</div>
+    </div>
+    <div class="footer"><span>초기 비교와 별도 실행. CPU 시간과 경과 시간은 서로 다른 지표로, 합산할 수 없음.</span><span class="page">04 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-5">
+    <div class="topline"><span>PERTINENCE</span><span>COMMUNICATION OPTIMIZATION</span></div>
+    <h1 id="title-5">통신 비용을 줄일수록 지연 감소</h1>
+    <p class="subtitle">Binary로 변환 비용 감소 · Keep-alive로 연결 재사용 · Fused로 내부 RPC 제거</p>
+    <div class="body">
+      <div class="panel" style="padding:26px 28px 8px">
+        <div class="barrow"><span>Distributed 기준</span><div class="track"><div class="bar gray" style="--w:100%"></div></div><strong>29.853ms</strong></div>
+        <div class="barrow"><span>Binary</span><div class="track"><div class="bar" style="--w:67.90%"></div></div><strong>20.271ms</strong></div>
+        <div class="barrow"><span>Keep-alive</span><div class="track"><div class="bar" style="--w:86.44%"></div></div><strong>25.806ms</strong></div>
+        <div class="barrow"><span>Binary + Keep-alive</span><div class="track"><div class="bar" style="--w:56.08%"></div></div><strong>16.743ms</strong></div>
+        <div class="barrow"><span class="em">Fused</span><div class="track"><div class="bar warm" style="--w:42.51%"></div></div><strong class="orange">12.692ms</strong></div>
+      </div>
+      <div class="grid" style="margin-top:20px;gap:18px">
+        <div class="panel soft" style="padding:17px 24px"><strong>Binary + Keep-alive</strong><p style="margin-top:4px">기준 대비 평균 지연 <strong class="em">43.9% 감소</strong></p></div>
+        <div class="panel soft" style="padding:17px 24px"><strong>Fused · 전체 모델 통합</strong><p style="margin-top:4px">기준 대비 평균 지연 <strong class="em">57.5% 감소</strong></p></div>
+      </div>
+    </div>
+    <div class="footer"><span>평균 지연시간 비교 · Predictor 총 4 CPU·4 GiB · 외부 JSON API 및 FP32 정밀도 유지</span><span class="page">05 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-6">
+    <div class="topline"><span>PERTINENCE</span><span>HYBRID ARCHITECTURE</span></div>
+    <h1 id="title-6">Hybrid: 통신은 줄이고, Expert는 독립 확장</h1>
+    <p class="subtitle">Fused는 특정 Expert만 확장할 수 없어, 전체 Pod를 함께 복제해야 합니다.</p>
+    <div class="body">
+      <div class="grid" style="grid-template-columns:.95fr 1.25fr">
+        <div class="panel soft">
+          <h2>공통 경로를 Router에 통합</h2>
+          <div class="node dark" style="padding:22px">Router Pod<small>ShuffleNet 특징 추출 + Dispatcher</small></div>
+          <p style="text-align:center;margin:10px 0;color:var(--teal)">↓ Binary + Keep-alive</p>
+          <div class="flow"><div class="node">MobileNet<small>별도 Pod</small></div><div class="node">ResNet56<small>별도 Pod</small></div></div>
+          <p class="small muted" style="margin-top:20px">선택된 Expert만 원격 호출 · 요청당 RPC 1회</p>
+        </div>
+        <div class="panel" style="padding:20px 15px">
+          <table style="font-size:16px">
+            <thead><tr><th>항목</th><th class="num">분산 최적화¹</th><th class="num em">Hybrid</th><th class="num">Fused</th></tr></thead>
+            <tbody>
+              <tr><td>Pod</td><td class="num">4</td><td class="num">3</td><td class="num">1</td></tr>
+              <tr><td>내부 RPC</td><td class="num">2회</td><td class="num">1회</td><td class="num">0회</td></tr>
+              <tr><td>평균 지연</td><td class="num">16.743ms</td><td class="num em">14.662ms</td><td class="num">12.692ms</td></tr>
+              <tr><td>Expert별<br>독립 확장</td><td class="num">가능</td><td class="num em">가능</td><td class="num">전체 Pod</td></tr>
+            </tbody>
+          </table>
+          <p class="small muted" style="padding:14px 12px">¹ Distributed + Binary + Keep-alive</p>
+        </div>
+      </div>
+      <div class="takeaway">개선된 Distributed 대비 평균 지연 12.4% 감소 · Expert 독립 확장 유지</div>
+    </div>
+    <div class="footer"><span>독립 확장이 가능한 구조이며, 부하 증가 시 처리량·자동 확장 효과는 추가 검증 필요</span><span class="page">06 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-7">
+    <div class="topline"><span>PERTINENCE</span><span>RESULT</span></div>
+    <h1 id="title-7">Hybrid도 Direct보다 빠르지 않았습니다</h1>
+    <p class="subtitle">Distributed의 통신 비용을 개선한 뒤에도, ResNet56 단일 서빙의 지연시간을 넘었습니다.</p>
+    <div class="body">
+      <div class="grid">
+        <div class="panel">
+          <h2>평균 지연시간</h2>
+          <div style="margin-top:42px">
+            <div class="barrow" style="grid-template-columns:70px 1fr 105px"><span>Direct</span><div class="track"><div class="bar" style="--w:60.72%"></div></div><strong>10.379ms</strong></div>
+            <div class="barrow" style="grid-template-columns:70px 1fr 105px"><span>Hybrid</span><div class="track"><div class="bar warm" style="--w:85.78%"></div></div><strong>14.662ms</strong></div>
+          </div>
+          <p class="small muted" style="margin-top:30px">통신 최적화 이후에도 평균 지연 증가</p>
+        </div>
+        <div class="panel">
+          <h2>p95 지연시간</h2>
+          <div style="margin-top:42px">
+            <div class="barrow" style="grid-template-columns:70px 1fr 105px"><span>Direct</span><div class="track"><div class="bar" style="--w:73.99%"></div></div><strong>12.646ms</strong></div>
+            <div class="barrow" style="grid-template-columns:70px 1fr 105px"><span>Hybrid</span><div class="track"><div class="bar warm" style="--w:100%"></div></div><strong>17.092ms</strong></div>
+          </div>
+          <p class="small muted" style="margin-top:30px">꼬리 지연시간에서도 Direct가 더 낮음</p>
+        </div>
+      </div>
+      <div class="takeaway">이번 조건에서는 통신 개선만으로 단일 모델보다 빠른 추론을 달성하지 못함</div>
+      <p class="muted" style="margin-top:22px;font-size:19px">원인을 Expert 선택 분포와 실제 모델 실행시간으로 분석합니다. →</p>
+    </div>
+    <div class="footer"><span>Direct·Hybrid는 각각 초기 비교·최적화 실험의 결과이며, 할당 자원도 다름. 두 그래프는 동일한 길이 척도 사용.</span><span class="page">07 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-8">
+    <div class="topline"><span>PERTINENCE</span><span>RESULT ANALYSIS</span></div>
+    <h1 id="title-8">선택 분포와 실제 실행 비용의 영향</h1>
+    <p class="subtitle">계산 절감이 특징 추출·Dispatcher·남은 통신 비용을 상쇄하지 못한 것으로 해석됩니다.</p>
+    <div class="body">
+      <div class="grid">
+        <div class="panel">
+          <h2>① 추가 Expert 계산이 항상 필요</h2>
+          <div class="splitbar"><span class="mobile">MobileNet 32%</span><span class="resnet">ResNet56 68%</span></div>
+          <p class="small muted">ShuffleNet 선택 0%</p>
+          <p class="bullet" style="margin-top:26px">모든 요청에서 특징 추출·Dispatcher 이후 추가 Expert 실행</p>
+          <p class="bullet">전체 요청의 <strong>68%는 ResNet56까지 실행</strong></p>
+          <p class="bullet">Hybrid에도 원격 Expert 호출 <strong>1회</strong>가 남아 있음</p>
+        </div>
+        <div class="panel">
+          <h2>② FLOPs와 실행시간은 비례하지 않음</h2>
+          <table style="font-size:17px">
+            <thead><tr><th>모델</th><th class="num">MFLOPs</th><th class="num">실행시간</th></tr></thead>
+            <tbody>
+              <tr><td>ShuffleNet</td><td class="num">21.80</td><td class="num">1.323ms</td></tr>
+              <tr><td>MobileNet</td><td class="num">55.94</td><td class="num">1.464ms</td></tr>
+              <tr><td>ResNet56</td><td class="num">251.50</td><td class="num">2.939ms</td></tr>
+            </tbody>
+          </table>
+          <p style="margin-top:23px;font-size:21px">연산량 <strong>11.54배</strong> 차이<br>실행시간은 <strong class="em">2.22배</strong> 차이</p>
+        </div>
+      </div>
+      <div class="takeaway">다음 과제: 실제 실행 비용을 반영한 학습과 선택 분포 개선</div>
+    </div>
+    <div class="footer"><span>모델별 실행시간은 별도 직접 호출 실험(내부 검증 포함)으로, 특정 CPU·런타임·저부하 조건에 한정.</span><span class="page">08 / 09</span></div>
+  </section>
+
+  <section class="slide" aria-labelledby="title-9">
+    <div class="topline"><span>PERTINENCE</span><span>NEXT STEPS</span></div>
+    <h1 id="title-9">실제 비용을 반영한 모델 선택으로</h1>
+    <p class="subtitle">관측된 한계를 학습 목적·Expert 구성·서빙 평가에 반영합니다.</p>
+    <div class="body">
+      <table>
+        <thead><tr><th style="width:36%">확인한 한계</th><th>향후 과제</th></tr></thead>
+        <tbody>
+          <tr><td>FLOPs ≠ 실제 실행 비용</td><td>측정 실행시간·CPU 사용량을 학습 비용에 반영</td></tr>
+          <tr><td>ResNet56 선택 비율 68%</td><td>데이터셋·Expert 조합·학습 설정 비교</td></tr>
+          <tr><td>모든 요청에서 추가 Expert 실행</td><td>특징 추출 모델에서 종료하는 비율과 정확도 함께 평가</td></tr>
+          <tr><td>저부하 중심 실험</td><td>동일 정확도에서 지연·처리량·자원·자동 확장 검증</td></tr>
+        </tbody>
+      </table>
+      <p class="small muted" style="margin-top:17px">조기 종료 비율을 높여도 정확도 저하와 기본 처리 비용이 남으므로, 성능 개선 여부는 후속 실험으로 확인해야 합니다.</p>
+      <div class="takeaway" style="margin-top:30px;font-size:27px;padding:23px 26px">동적 모델 선택의 효과는<br>실제 서비스 전체 비용으로 평가해야 합니다.</div>
+    </div>
+    <div class="footer"><span>정확도와 실행 비용을 함께 고려하는 후속 실험</span><span class="page">09 / 09</span></div>
+  </section>
+</div>
+</main>
+<nav class="controls" aria-label="슬라이드 탐색">
+  <button id="prev" type="button" aria-label="이전 슬라이드">← 이전</button>
+  <div class="dots" aria-label="페이지 선택"></div>
+  <button id="next" type="button" aria-label="다음 슬라이드">다음 →</button>
+  <span class="hint">← → / Space</span>
+  <button id="print" type="button">PDF 인쇄</button>
+  <span id="status" aria-live="polite" style="position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden"></span>
+</nav>
+<noscript><style>.viewport{position:static;display:block;overflow:auto}.stage{height:auto}.slide{display:flex;margin-bottom:20px}.controls{display:none}</style><p class="noscript">JavaScript 없이 모든 페이지를 순서대로 표시합니다.</p></noscript>
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const stage = document.querySelector('.stage');
+  const viewport = document.querySelector('.viewport');
+  const prev = document.getElementById('prev');
+  const next = document.getElementById('next');
+  const dots = document.querySelector('.dots');
+  const status = document.getElementById('status');
+  let current = 0;
+  slides.forEach((slide, i) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'dot';
+    button.setAttribute('aria-label', `${i + 1}페이지: ${slide.querySelector('h1').textContent}`);
+    button.addEventListener('click', () => show(i));
+    dots.append(button);
+  });
+  function show(index, updateHash = true) {
+    current = Math.max(0, Math.min(slides.length - 1, index));
+    slides.forEach((slide, i) => slide.classList.toggle('active', i === current));
+    [...dots.children].forEach((button, i) => {
+      if (i === current) button.setAttribute('aria-current', 'step');
+      else button.removeAttribute('aria-current');
+    });
+    prev.disabled = current === 0;
+    next.disabled = current === slides.length - 1;
+    status.textContent = `${current + 1} / ${slides.length}: ${slides[current].querySelector('h1').textContent}`;
+    if (updateHash) history.replaceState(null, '', `#${current + 1}`);
+  }
+  function fromHash() {
+    const page = Number(location.hash.slice(1));
+    show(Number.isInteger(page) && page > 0 ? page - 1 : 0, false);
+  }
+  function resize() {
+    const scale = Math.min((viewport.clientWidth - 24) / 1280, (viewport.clientHeight - 24) / 720);
+    stage.style.transform = `scale(${Math.max(.1, scale)})`;
+  }
+  prev.addEventListener('click', () => show(current - 1));
+  next.addEventListener('click', () => show(current + 1));
+  document.getElementById('print').addEventListener('click', () => window.print());
+  document.addEventListener('keydown', event => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.target.closest('button, input, textarea, select, a')) return;
+    if (['ArrowRight', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); show(current + 1); }
+    if (['ArrowLeft', 'PageUp'].includes(event.key)) { event.preventDefault(); show(current - 1); }
+    if (event.key === 'Home') { event.preventDefault(); show(0); }
+    if (event.key === 'End') { event.preventDefault(); show(slides.length - 1); }
+  });
+  window.addEventListener('resize', resize);
+  window.addEventListener('hashchange', fromHash);
+  fromHash();
+  resize();
+</script>
+</body>
+</html>

@@ -127,7 +127,8 @@ class Predictor(Protocol):
 class KServeV2Predictor:
     """Persistent, serialized V2 HTTP client with a single attempt per call."""
 
-    def __init__(self, endpoint: str, model_name: str, *, timeout_seconds: float = 10.0) -> None:
+    def __init__(self, endpoint: str, model_name: str, *, timeout_seconds: float = 10.0,
+                 request_id_prefix: str | None = None) -> None:
         parsed = urlsplit(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("endpoint must be an http(s) URL")
@@ -141,6 +142,8 @@ class KServeV2Predictor:
         base = parsed.path.rstrip("/")
         self._path = f"{base}/v2/models/{model_name}/infer"
         self.model_name = model_name
+        self.request_id_prefix = request_id_prefix
+        self.request_index = 0
 
     def __call__(self, image: np.ndarray) -> Mapping[str, object]:
         value = np.asarray(image)
@@ -156,10 +159,16 @@ class KServeV2Predictor:
                 }
             ]
         }
+        headers = {"Content-Type": "application/json"}
+        if self.request_id_prefix is not None:
+            request_id = f"{self.request_id_prefix}-{self.request_index}"
+            request["id"] = request_id
+            headers["X-Request-Id"] = request_id
+            self.request_index += 1
         body = json.dumps(request, separators=(",", ":"), allow_nan=False).encode()
         try:
             self._connection.request(
-                "POST", self._path, body=body, headers={"Content-Type": "application/json"}
+                "POST", self._path, body=body, headers=headers
             )
             response = self._connection.getresponse()
             payload = response.read()
@@ -201,7 +210,7 @@ class KServeV2Predictor:
             "model_version": str(value.get("model_version", "")),
             **{
                 key: str(parameters[key])
-                for key in ("promotion_id", "dispatcher_id", "expert_id", "serving_mode")
+                for key in ("promotion_id", "dispatcher_id", "expert_id", "serving_mode", "run_fingerprint")
                 if key in parameters
             },
         }

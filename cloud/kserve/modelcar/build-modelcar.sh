@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 expert|dynamic-router BUNDLE_DIR REPOSITORY:BUILD_TAG BUSYBOX_IMAGE@sha256:DIGEST" >&2
+  echo "usage: $0 expert|dynamic-router|fused-dynamic|hybrid-dynamic BUNDLE_DIR REPOSITORY:BUILD_TAG BUSYBOX_IMAGE@sha256:DIGEST" >&2
   exit 2
 }
 
@@ -13,7 +13,7 @@ tagged_image=$3
 base_image=$4
 
 case "$kind" in
-  expert|dynamic-router) ;;
+  expert|dynamic-router|fused-dynamic|hybrid-dynamic) ;;
   *) usage ;;
 esac
 [[ "$tagged_image" =~ ^[^[:space:]@]+:[A-Za-z0-9_.-]+$ ]] || {

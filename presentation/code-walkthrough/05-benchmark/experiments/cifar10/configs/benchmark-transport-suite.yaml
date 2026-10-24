@@ -1,0 +1,38 @@
+schema_version: 1
+kind: transport-suite
+seed: 20261011
+arms: [D0, D1, D2, D3, H1, F0]
+blocks: 6
+order: seeded-first-order-then-rotate
+warmup_requests: 200
+requests: 2000
+target_rps: 5
+concurrency: 1
+retry_count: 0
+runtime:
+  python: '3.11'
+  onnxruntime: 1.20.1
+  workers: 1
+  ort_threads: 1
+diagnostics:
+  initial_arms: [D0, D1, D2, D3, H1, F0]
+  performance_enabled: false
+  overhead_pairs: [D0, selected_distributed]
+validity:
+  logits_atol: 1.0e-6
+  prediction_mismatches: 0
+  route_mismatches: 0
+  errors: 0
+  missing: 0
+  duplicates: 0
+  restarts: 0
+  metric_gaps: 0
+  schedule_misses: 0
+  same_nodes_within_block: true
+analysis:
+  bootstrap_unit: block
+  bootstrap_resamples: 10000
+  confidence: 0.95
+  maximum_p95_regression: 0.05
+  maximum_pod_cpu_regression: 0.05
+  automatic_promotion: false

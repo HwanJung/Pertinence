@@ -30,6 +30,13 @@ pipeline = [
   "protobuf==6.33.5",
 ]
 kfp = ["kfp==2.17.0"]
+demo = [
+  "fastapi==0.143.3",
+  "uvicorn==0.54.0",
+  "python-multipart==0.0.32",
+  "httpx==0.28.1",
+  "pillow==12.3.0",
+]
 dev = [
   "pytest==8.3.4",
   "ruff==0.8.4",
@@ -44,6 +51,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"pertinence.demo" = ["static/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

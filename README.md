@@ -100,6 +100,8 @@ after the preflight passes on the configured CUDA device.
 
 ## Portable pipeline and GKE
 
+- [Dispatcher browser demo](experiments/cifar10/docs/dispatcher-demo.ko.md): image upload,
+  Kubernetes serving, local browser access, and state restoration.
 - [Pipeline package README](pipelines/pertinence/README.md): bundle contracts, local component
   execution, IR compilation, and submission interface.
 - [Cloud architecture](cloud/docs/architecture.ko.md): deployed boundaries and scheduling.

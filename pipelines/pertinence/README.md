@@ -21,6 +21,9 @@ pipelines/pertinence/
 Component E2E와 두 IR 구조 검사는 root `tests/test_pipeline_components.py`와
 `tests/test_kfp_pipeline.py`가 소유한다.
 
+코드를 처음 읽는 사람을 위한 DAG, component, artifact와 domain 함수의 상세 연결은
+[`implementation-guide.ko.md`](implementation-guide.ko.md)에 정리한다.
+
 GKE, Workload Identity, launcher ConfigMap과 production 운영 절차는
 [cloud runbook](../../cloud/docs/runbook.ko.md)이 정본이다. Repository-owned Kubernetes manifest는
 `cloud/kfp/`에 둔다.

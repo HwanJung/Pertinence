@@ -1,0 +1,11 @@
+**
+!pyproject.toml
+!README.md
+!src/
+!src/**
+!cloud/
+!cloud/demo/
+!cloud/demo/requirements.lock
+!cloud/demo/Dockerfile
+**/__pycache__/
+**/*.pyc

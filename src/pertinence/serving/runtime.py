@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 import numpy as np
 
 from ..pipeline.artifacts import verify_artifact
+from . import binary
+from .diagnostics import Diagnostics, OFF, identity
 from .v2 import IMAGE_SHAPE, V2ProtocolError, infer_response, parse_infer_response
 
 
@@ -180,12 +182,20 @@ class HttpExpertClient:
         *,
         timeout_seconds: float,
         feature_dim: int | None = None,
+        transport: str = "json",
+        diagnostics: Diagnostics = OFF,
     ) -> None:
         parsed = urlsplit(endpoint)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("expert endpoint must be an http(s) URL")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if transport not in {"json", "binary"}:
+            raise ValueError("transport must be json or binary")
+        self.transport = transport
+        self.diagnostics = diagnostics
+        self.connections_created = 0
+        self.connections_reused = 0
         self.model_name = model_name
         self.timeout_seconds = timeout_seconds
         self.feature_dim = feature_dim
@@ -197,33 +207,59 @@ class HttpExpertClient:
         self._connection = connection_type(parsed.hostname, port, timeout=timeout_seconds)
         self._lock = threading.Lock()
 
-    def predict(self, image: np.ndarray, *, include_features: bool = False) -> ExpertResult:
-        image = _validate_image(image)
-        if include_features and self.feature_dim is None:
-            raise ValueError("client has no configured feature output")
-        request = {
-            "inputs": [
-                {
-                    "name": "image",
-                    "shape": list(IMAGE_SHAPE),
-                    "datatype": "FP32",
-                    "data": image.reshape(-1).tolist(),
-                }
-            ]
-        }
-        if include_features:
-            request["outputs"] = [{"name": "logits"}, {"name": "features"}]
-        encoded = json.dumps(request, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    def predict(self, image: np.ndarray, *, include_features: bool = False,
+                image_bytes: bytes | None = None, request_id: str | None = None,
+                call_index: int = 1) -> ExpertResult:
+        token = identity.set({"request_id": request_id, "expert": self.model_name,
+                              "call_index": str(call_index)})
+        try:
+            return self._predict(image, include_features=include_features,
+                                 image_bytes=image_bytes, request_id=request_id,
+                                 call_index=call_index)
+        finally:
+            identity.reset(token)
+
+    def _predict(self, image: np.ndarray, *, include_features: bool,
+                 image_bytes: bytes | None, request_id: str | None,
+                 call_index: int) -> ExpertResult:
+        with self.diagnostics.span("request_encode") as record:
+            image = _validate_image(image)
+            if include_features and self.feature_dim is None:
+                raise ValueError("client has no configured feature output")
+            request = {"inputs": [{"name": "image", "shape": list(IMAGE_SHAPE),
+                                   "datatype": "FP32", "data": image}]}
+            if request_id is not None:
+                request["id"] = request_id
+            if include_features:
+                request["outputs"] = [{"name": "logits"}, {"name": "features"}]
+            if self.transport == "binary":
+                encoded, headers = binary.encode(request, "inputs", image_bytes=image_bytes)
+            else:
+                request["inputs"][0]["data"] = image.reshape(-1).tolist()
+                encoded = json.dumps(request, separators=(",", ":"), allow_nan=False).encode()
+                headers = {"Content-Type": "application/json"}
+            headers["X-Call-Index"] = str(call_index)
+            if request_id is not None:
+                headers["X-Request-Id"] = request_id
+            record["body_bytes"] = len(encoded)
         # A lock is the bounded connection pool for a concurrency-one router.
         # No loop exists here: timeout, disconnect, 5xx, and protocol errors are
         # surfaced from this single attempt.
         try:
             with self._lock:
-                self._connection.request(
-                    "POST", self._path, encoded, {"Content-Type": "application/json"}
-                )
-                response = self._connection.getresponse()
-                body = response.read()
+                with self.diagnostics.span("connection") as record:
+                    created = self._connection.sock is None
+                    if created:
+                        self._connection.connect()
+                        self.connections_created += 1
+                    else:
+                        self.connections_reused += 1
+                    record.update(created=int(created), reused=int(not created))
+                with self.diagnostics.span("rpc_exchange") as record:
+                    self._connection.request("POST", self._path, encoded, headers)
+                    response = self._connection.getresponse()
+                    body = response.read()
+                    record.update(request_bytes=len(encoded), response_bytes=len(body))
         except (TimeoutError, http.client.RemoteDisconnected) as error:
             self._connection.close()
             raise ExpertTimeoutError(f"expert {self.model_name} request timed out") from error
@@ -233,10 +269,14 @@ class HttpExpertClient:
         if response.status != 200:
             raise ExpertClientError(f"expert {self.model_name} returned HTTP {response.status}")
         try:
-            payload = json.loads(body.decode("utf-8"))
-            logits, features = parse_infer_response(
-                payload, expected_features=self.feature_dim if include_features else None
-            )
+            with self.diagnostics.span("response_decode"):
+                if self.transport == "binary":
+                    payload = binary.decode(body, response.getheader(binary.HEADER), "outputs")
+                else:
+                    payload = json.loads(body.decode("utf-8"))
+                logits, features = parse_infer_response(
+                    payload, expected_features=self.feature_dim if include_features else None
+                )
         except (UnicodeDecodeError, json.JSONDecodeError, V2ProtocolError) as error:
             raise ExpertClientError(f"expert {self.model_name} returned an invalid response") from error
         parameters = payload.get("parameters", {})
@@ -283,13 +323,14 @@ class DynamicRouter:
         *,
         feature_dim: int,
         serving_mode: str = "distributed",
+        diagnostics: Diagnostics = OFF,
     ) -> None:
         if len(expert_order) == 0 or len(expert_order) != len(set(expert_order)):
             raise ValueError("expert_order must contain unique expert IDs")
         if extractor_id not in expert_order or set(clients) != set(expert_order):
             raise ValueError("clients and extractor must exactly match expert_order")
-        if serving_mode not in {"fused", "distributed"}:
-            raise ValueError("serving_mode must be fused or distributed")
+        if serving_mode not in {"fused", "distributed", "hybrid"}:
+            raise ValueError("serving_mode must be fused, distributed, or hybrid")
         self.model_name = model_name
         self.promotion_id = promotion_id
         self.dispatcher_id = dispatcher_id
@@ -299,16 +340,36 @@ class DynamicRouter:
         self.dispatcher = dispatcher
         self.feature_dim = feature_dim
         self.serving_mode = serving_mode
+        self.diagnostics = diagnostics
 
-    def predict(self, image: np.ndarray) -> RouterResult:
-        image = _validate_image(image)
+    def predict(self, image: np.ndarray, request_id: str | None = None) -> RouterResult:
+        with self.diagnostics.span("router_input"):
+            image = _validate_image(image)
+            image_bytes = (np.ascontiguousarray(image, dtype="<f4").tobytes() if any(
+                isinstance(client, HttpExpertClient) and client.transport == "binary"
+                for client in self.clients.values()
+            ) else None)
+
+        call_index = 0
+
+        def call(name: str, include_features: bool = False) -> ExpertResult:
+            nonlocal call_index
+            client = self.clients[name]
+            if isinstance(client, HttpExpertClient):
+                call_index += 1
+                return client.predict(image, include_features=include_features,
+                                      image_bytes=image_bytes, request_id=request_id,
+                                      call_index=call_index)
+            with self.diagnostics.span("local_model", expert=name):
+                return client.predict(image, include_features=include_features)
         cpu_started = time.process_time()
         started = time.perf_counter()
         extracted = _validate_result(
-            self.clients[self.extractor_id].predict(image, include_features=True), self.feature_dim
+            call(self.extractor_id, include_features=True), self.feature_dim
         )
         after_extractor = time.perf_counter()
-        route_logits = np.asarray(self.dispatcher.predict(extracted.features))
+        with self.diagnostics.span("dispatcher"):
+            route_logits = np.asarray(self.dispatcher.predict(extracted.features))
         if route_logits.shape != (1, len(self.expert_order)) or not np.isfinite(route_logits).all():
             raise ValueError("dispatcher logits have invalid shape or values")
         route = int(route_logits.argmax(axis=1)[0])
@@ -320,7 +381,7 @@ class DynamicRouter:
             upstream_cpu_seconds = extracted.process_cpu_seconds
         else:
             expert_started = time.perf_counter()
-            selected = _validate_result(self.clients[expert_id].predict(image))
+            selected = _validate_result(call(expert_id))
             logits = selected.logits
             expert_seconds = time.perf_counter() - expert_started
             upstream_cpu_seconds = extracted.process_cpu_seconds + selected.process_cpu_seconds
@@ -336,7 +397,7 @@ class DynamicRouter:
         )
 
     def infer(self, image: np.ndarray, request_id: str | None = None) -> dict[str, Any]:
-        result = self.predict(image)
+        result = self.predict(image, request_id)
         return infer_response(
             self.model_name,
             result.logits,
@@ -377,6 +438,7 @@ class FusedDynamicRouter(DynamicRouter):
         dispatcher: Dispatcher,
         *,
         feature_dim: int,
+        diagnostics: Diagnostics = OFF,
     ) -> None:
         if len(expert_order) != 3 or extractor_id != expert_order[0]:
             raise ValueError("fused router requires three ordered experts with extractor at route 0")
@@ -392,7 +454,25 @@ class FusedDynamicRouter(DynamicRouter):
             dispatcher,
             feature_dim=feature_dim,
             serving_mode="fused",
+            diagnostics=diagnostics,
         )
+
+
+class HybridDynamicRouter(DynamicRouter):
+    """Local extractor and dispatcher with binary RPC only for routes one and two."""
+
+    def __init__(self, model_name: str, promotion_id: str, dispatcher_id: str,
+                 expert_order: list[str], extractor_id: str,
+                 clients: dict[str, ExpertClient], dispatcher: Dispatcher, *,
+                 feature_dim: int, diagnostics: Diagnostics = OFF) -> None:
+        if (len(expert_order) != 3 or extractor_id != expert_order[0]
+                or not isinstance(clients.get(extractor_id), OnnxExpertRunner)
+                or any(not isinstance(clients.get(name), HttpExpertClient)
+                       or clients[name].transport != "binary" for name in expert_order[1:])):
+            raise ValueError("hybrid requires a local extractor and two binary HTTP experts")
+        super().__init__(model_name, promotion_id, dispatcher_id, expert_order, extractor_id,
+                         clients, dispatcher, feature_dim=feature_dim, serving_mode="hybrid",
+                         diagnostics=diagnostics)
 
 
 class StaticRouter:

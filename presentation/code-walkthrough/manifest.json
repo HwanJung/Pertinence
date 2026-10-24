@@ -1,0 +1,216 @@
+{
+  "snapshot_utc": "2026-10-20T14:00:58.647647+00:00",
+  "source_state": "working tree (including uncommitted changes)",
+  "files": [
+    {
+      "copy": "01-infrastructure/cloud/iac/modules/gke/main.tf",
+      "source": "cloud/iac/modules/gke/main.tf",
+      "sha256": "186cb29ee473ccc54470f432f55a151ba1de0050542e1cf5bbad473381ec5e6b",
+      "role": "GKE 클러스터와 역할별 노드 풀 리소스"
+    },
+    {
+      "copy": "01-infrastructure/cloud/iac/modules/gke/variables.tf",
+      "source": "cloud/iac/modules/gke/variables.tf",
+      "sha256": "fcb1f8c5b832306a6c9ac724b6eed8473d5e1c44735504342d091afcfb3a79fd",
+      "role": "노드 풀과 클러스터 입력 변수"
+    },
+    {
+      "copy": "01-infrastructure/cloud/iac/environments/dispatcher-current/profiles/benchmark-current.tfvars",
+      "source": "cloud/iac/environments/dispatcher-current/profiles/benchmark-current.tfvars",
+      "sha256": "5f6e91162fe5b3a89799a536e6b05f146008cadee46b0f939d35a9e93c75512e",
+      "role": "시스템·학습·추론·부하 생성 노드 풀 설정"
+    },
+    {
+      "copy": "01-infrastructure/cloud/kfp/service-account.yaml",
+      "source": "cloud/kfp/service-account.yaml",
+      "sha256": "97a8384f9ff0d623420b8d5e0a64614ec1dd5cbd4ef67cc7137b570730facb99",
+      "role": "KFP 실행 Pod의 ServiceAccount"
+    },
+    {
+      "copy": "01-infrastructure/cloud/kfp/kfp-launcher-configmap.yaml",
+      "source": "cloud/kfp/kfp-launcher-configmap.yaml",
+      "sha256": "5324fbe3f797efa0cad73bf1a4c4fd26a066c1d8163931249b385fd4c5210787",
+      "role": "KFP launcher의 artifact 저장 설정"
+    },
+    {
+      "copy": "02-kfp/pipelines/pertinence/pipeline.py",
+      "source": "pipelines/pertinence/pipeline.py",
+      "sha256": "b4a08a939dc9e7a8f07eeb55a8aa6af1e39413c557c433e37c425b8914c01197",
+      "role": "Importer 3개와 계산 컴포넌트 5개의 DAG·리소스·재시도 정책"
+    },
+    {
+      "copy": "02-kfp/pipelines/pertinence/components.py",
+      "source": "pipelines/pertinence/components.py",
+      "sha256": "5312fa52fce0198ad7ef985c5ebdf3db8d0279e7700b1639705906ee5f34df84",
+      "role": "컨테이너 컴포넌트의 입출력과 CLI 호출 정의"
+    },
+    {
+      "copy": "02-kfp/pipelines/pertinence/submit.py",
+      "source": "pipelines/pertinence/submit.py",
+      "sha256": "a099a70e892fe88358214906fe0ebfd8dd4e0ff4b155613fbf87fe0d02543432",
+      "role": "파이프라인 제출과 입력 URI·해시 전달"
+    },
+    {
+      "copy": "02-kfp/pipelines/pertinence/Dockerfile",
+      "source": "pipelines/pertinence/Dockerfile",
+      "sha256": "faa8431ab3fe0116f19005c8bc7827a984884adf4b1f0dd9ee9108349fa5c364",
+      "role": "CPU 학습 컴포넌트 이미지 구성"
+    },
+    {
+      "copy": "02-kfp/experiments/cifar10/configs/pipeline-run.yaml",
+      "source": "experiments/cifar10/configs/pipeline-run.yaml",
+      "sha256": "d91da0ae57bd52a18eb38b450718e7b9343a41ac995d907bfb142dca48581b13",
+      "role": "Expert 선택·데이터 분할·학습·NSGA-II 설정"
+    },
+    {
+      "copy": "03-training/src/pertinence/pipeline/cli.py",
+      "source": "src/pertinence/pipeline/cli.py",
+      "sha256": "766956495e9acc4ffd791fd0f7c00141a4508889266eedfe71ff91a304a71b30",
+      "role": "컨테이너 명령을 실제 구현 함수에 연결"
+    },
+    {
+      "copy": "03-training/src/pertinence/pipeline/validation.py",
+      "source": "src/pertinence/pipeline/validation.py",
+      "sha256": "be69f333d7e616ab85de34e736f9d8ad3e08d27f8ec423056bab759992947db5",
+      "role": "입력 해시·계약 검증과 데이터 분할"
+    },
+    {
+      "copy": "03-training/src/pertinence/pipeline/cache.py",
+      "source": "src/pertinence/pipeline/cache.py",
+      "sha256": "2988eb282b75f98fd29ec77e88cfea8516c2b59486d31bba2b9f29f67613bf48",
+      "role": "특징·Expert 예측·라우팅 정답 캐시 생성"
+    },
+    {
+      "copy": "03-training/src/pertinence/pipeline/search.py",
+      "source": "src/pertinence/pipeline/search.py",
+      "sha256": "a65dd47eed5b835fceb0f783adf292d27bab4e75e45a120a938a4ece4a4494cd",
+      "role": "Dispatcher 후보 탐색과 checkpoint 복원·최종 평가"
+    },
+    {
+      "copy": "03-training/src/pertinence/pipeline/registry.py",
+      "source": "src/pertinence/pipeline/registry.py",
+      "sha256": "48d2e38994ee3642fe31ea0c5f6f23ce7f5d4f54d5eeb4842d4a98c47c4107d1",
+      "role": "평가된 모델과 run별 SQLite registry 등록"
+    },
+    {
+      "copy": "03-training/src/pertinence/training.py",
+      "source": "src/pertinence/training.py",
+      "sha256": "9bcca5cdebd03f58955abeb80210a0484787186393fd7f68ed5051e2426d8cdb",
+      "role": "Dispatcher 학습 루프와 캐시 기반 평가"
+    },
+    {
+      "copy": "03-training/src/pertinence/routing.py",
+      "source": "src/pertinence/routing.py",
+      "sha256": "eb1c2d04c3c2e90c19a8cddcba542fe7fe4261fd8c6d50bda07fcfaae71cce6d",
+      "role": "FC Dispatcher·라우팅 정답·가중치·penalty loss"
+    },
+    {
+      "copy": "03-training/src/pertinence/optimization.py",
+      "source": "src/pertinence/optimization.py",
+      "sha256": "fb72f73162d74d2c41c80e2e2ab8e458edbfc0ea87cbe53b0b1c3632384f668a",
+      "role": "NSGA-II chromosome과 정확도·연산량 목적함수"
+    },
+    {
+      "copy": "03-training/src/pertinence/metrics.py",
+      "source": "src/pertinence/metrics.py",
+      "sha256": "178fdf214ecf2647fdcd7f566bcd81eef8e2dbb20f78e074c87a60a5433ddde7",
+      "role": "시스템 정확도·연산량·Pareto 판정"
+    },
+    {
+      "copy": "04-serving/cloud/kserve/manifests/00-platform.yaml.tmpl",
+      "source": "cloud/kserve/manifests/00-platform.yaml.tmpl",
+      "sha256": "377b259cddd0206a177c0067e8d6e1370d193edd6526a0b7375b85fa44de8724",
+      "role": "Namespace·ServiceAccount·불변 ConfigMap"
+    },
+    {
+      "copy": "04-serving/cloud/kserve/manifests/05-benchmark-workload-identity.yaml.tmpl",
+      "source": "cloud/kserve/manifests/05-benchmark-workload-identity.yaml.tmpl",
+      "sha256": "752d9f19abe52aaca10f56f324bd6430fb3a513ab71b5104ca96a9265839abed",
+      "role": "Benchmark identity와 Kubernetes RBAC"
+    },
+    {
+      "copy": "04-serving/cloud/kserve/manifests/10-workloads.yaml.tmpl",
+      "source": "cloud/kserve/manifests/10-workloads.yaml.tmpl",
+      "sha256": "5e5f87ca26d10202704b16edfe25a53f8c8bb37ca5d9c08b111b3d86501094ca",
+      "role": "KServe InferenceService와 benchmark Job의 기본 템플릿"
+    },
+    {
+      "copy": "04-serving/cloud/kserve/manifests/20-single-arm-job-v2.yaml.tmpl",
+      "source": "cloud/kserve/manifests/20-single-arm-job-v2.yaml.tmpl",
+      "sha256": "056beb33d488bf90c91bcbb5a2ac99c9c85779f15ab44f049f797e285156c57b",
+      "role": "단일 비교 조건의 부하 생성 Job"
+    },
+    {
+      "copy": "04-serving/src/pertinence/serving/runtime.py",
+      "source": "src/pertinence/serving/runtime.py",
+      "sha256": "1f57ddd69ffa2d9fe827e5d55c656807b38309f86ee3e39fcdcb2a361d9df314",
+      "role": "ONNX 실행·Dispatcher·원격 Expert·네 가지 추론 구조"
+    },
+    {
+      "copy": "04-serving/src/pertinence/serving/http.py",
+      "source": "src/pertinence/serving/http.py",
+      "sha256": "fd1aeac1392bcfe7716eefcb45acc0e9df35d5664a038ca4c029e1a5b495f728",
+      "role": "Expert HTTP 엔드포인트와 JSON·Binary 응답"
+    },
+    {
+      "copy": "04-serving/src/pertinence/serving/binary.py",
+      "source": "src/pertinence/serving/binary.py",
+      "sha256": "3e46032f0d68cf23b80d3efb507f0f4fcf6666a0def3580f3c7acf39297cb572",
+      "role": "FP32 tensor의 Binary 직렬화·역직렬화"
+    },
+    {
+      "copy": "04-serving/src/pertinence/serving/transport_deployment.py",
+      "source": "src/pertinence/serving/transport_deployment.py",
+      "sha256": "79228e8be6b8cb0bd6b49ff6e1192adaf7300f7c2b79f3c1a5f745fce1b80418",
+      "role": "기본 매니페스트를 통신·Fused·Hybrid 조건별로 변환"
+    },
+    {
+      "copy": "04-serving/src/pertinence/serving/cli/runtime.py",
+      "source": "src/pertinence/serving/cli/runtime.py",
+      "sha256": "dcac072ded47ba8222590fdcee27f2ca0b7d0f6a3c940dba510f8bacf26e2d6b",
+      "role": "CLI 설정에 따라 Expert·Router 프로세스 구성"
+    },
+    {
+      "copy": "04-serving/cloud/kserve/runtime/Dockerfile",
+      "source": "cloud/kserve/runtime/Dockerfile",
+      "sha256": "e937d561d334874b8b394339e57641547b072d262dd7834531b7ed7f49234339",
+      "role": "CPU ONNX 서빙 이미지 구성"
+    },
+    {
+      "copy": "05-benchmark/experiments/cifar10/configs/benchmark.yaml",
+      "source": "experiments/cifar10/configs/benchmark.yaml",
+      "sha256": "3709221ffc2cf64e666ac95074c01c9bd9135c4833fd96600a8c5c964f48d34c",
+      "role": "기본 서빙 비교 실험 설정"
+    },
+    {
+      "copy": "05-benchmark/experiments/cifar10/configs/benchmark-transport-suite.yaml",
+      "source": "experiments/cifar10/configs/benchmark-transport-suite.yaml",
+      "sha256": "13cf7bf5d98cbaebaa0b55b3a246c09c3efd93def9fec7b661e71e96e7907ed4",
+      "role": "통신 최적화 비교 실험 설정"
+    },
+    {
+      "copy": "05-benchmark/experiments/cifar10/configs/benchmark-single-arm-v2.yaml",
+      "source": "experiments/cifar10/configs/benchmark-single-arm-v2.yaml",
+      "sha256": "5fbc736e572b17bc8046ab5fd67a0d12b84f959537ed3ca681d28a7768577128",
+      "role": "단일 조건의 워밍업·요청·측정 설정"
+    },
+    {
+      "copy": "05-benchmark/src/pertinence/serving/benchmark.py",
+      "source": "src/pertinence/serving/benchmark.py",
+      "sha256": "eec860054ee5b2b01ad8a2c09f77a9e307f431ec088fec678d76ecfa77da1a46",
+      "role": "워밍업과 요청 스케줄·결과 레코드 수집"
+    },
+    {
+      "copy": "05-benchmark/src/pertinence/serving/diagnostics.py",
+      "source": "src/pertinence/serving/diagnostics.py",
+      "sha256": "ae379102d3e1837d5aeb1ec9b8b820c4a062d572ca959e76df525a1779a28360",
+      "role": "구간별 wall time·CPU time 계측"
+    },
+    {
+      "copy": "05-benchmark/src/pertinence/serving/transport_suite.py",
+      "source": "src/pertinence/serving/transport_suite.py",
+      "sha256": "78311f79cf04a06144fee53cf6f95b9af7ef14022e2884050dc0f97194a267f0",
+      "role": "비교 조건 정의·지연 통계·진단 로그 결합"
+    }
+  ]
+}

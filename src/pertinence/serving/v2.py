@@ -71,7 +71,7 @@ def parse_infer_request(value: dict[str, Any]) -> tuple[str | None, np.ndarray]:
     if tensor["shape"] != list(IMAGE_SHAPE):
         raise V2ProtocolError(f"image shape must be {list(IMAGE_SHAPE)}")
     data = tensor["data"]
-    if not isinstance(data, list):
+    if not isinstance(data, (list, np.ndarray)):
         raise V2ProtocolError("image data must be a JSON array")
     try:
         array = np.asarray(data)
@@ -160,7 +160,9 @@ def parse_infer_response(
         if output["shape"] != shape or output["datatype"] != datatype:
             raise V2ProtocolError(f"invalid upstream {name} shape or datatype")
         data = output["data"]
-        if not isinstance(data, list) or any(type(item) not in (int, float) for item in data):
+        if not isinstance(data, (list, np.ndarray)) or (
+            isinstance(data, list) and any(type(item) not in (int, float) for item in data)
+        ):
             raise V2ProtocolError(f"invalid upstream {name} data")
         array = np.asarray(data, dtype=dtype)
         if array.size != math.prod(shape) or not np.isfinite(array).all():
